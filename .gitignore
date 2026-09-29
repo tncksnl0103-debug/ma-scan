@@ -1,0 +1,9 @@
+results/
+scan_log.txt
+risk_sample.json
+stocks_raw.csv
+prices_cache.csv
+__pycache__/
+*_backup.py
+report_before_touch.py
+diag_log.txt
