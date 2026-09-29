@@ -32,10 +32,14 @@ jobs:
 
       - name: Naver reachability check
         run: |
-          curl -s -o /dev/null -w "mobile api: %{http_code}\n" "https://m.stock.naver.com/api/stocks/marketValue/KOSPI?page=1&pageSize=5" -A "Mozilla/5.0" || true
-          curl -s -o /dev/null -w "fchart: %{http_code}\n" "https://fchart.stock.naver.com/sise.nhn?symbol=005930&timeframe=day&count=5&requestType=0" -A "Mozilla/5.0" || true
+          {
+            curl -s -o /dev/null -m 20 -w "mobile api: %{http_code}\n" "https://m.stock.naver.com/api/stocks/marketValue/KOSPI?page=1&pageSize=5" -A "Mozilla/5.0" || echo "mobile api: fail"
+            curl -s -o /dev/null -m 20 -w "fchart: %{http_code}\n" "https://fchart.stock.naver.com/sise.nhn?symbol=005930&timeframe=day&count=5&requestType=0" -A "Mozilla/5.0" || echo "fchart: fail"
+          } | tee net_check.txt
 
       - name: Run scan
+        id: scan
+        continue-on-error: true
         run: python scan_ma.py
 
       - name: Show log
@@ -45,7 +49,8 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p site
-          cp results/latest.html site/index.html
+          { echo "== net check =="; cat net_check.txt; echo; echo "== scan log =="; cat scan_log.txt; } > site/log.txt 2>&1 || true
+          cp results/latest.html site/index.html || echo "scan failed - see log.txt" > site/index.html
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
@@ -53,3 +58,7 @@ jobs:
           path: site
       - id: deploy
         uses: actions/deploy-pages@v4
+
+      - name: Fail if scan failed
+        if: steps.scan.outcome == 'failure'
+        run: exit 1
