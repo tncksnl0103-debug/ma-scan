@@ -373,6 +373,15 @@ def main():
         except Exception:
             log("차트 페이지 생성 실패(엑셀은 정상 저장됨):")
             log(traceback.format_exc()[-800:])
+        try:
+            from simdata import write_sim_data
+            px_all = get_px(cache)
+            val_all = cache.pivot(index="날짜", columns="티커", values="거래대금").reindex(index=px_all.index, columns=px_all.columns)
+            k = write_sim_data(px_all, get_ohlc(cache, px_all), val_all, meta, os.path.join(OUT_DIR, "sim_data.json"))
+            log(f"가상매매 데이터 {k}종목 저장")
+        except Exception:
+            log("가상매매 데이터 생성 실패:")
+            log(traceback.format_exc()[-800:])
         log(f"\n기준일 {last_day}")
         for n, df in results.items():
             log(f"  {n}일선 ±{GAP_PCT:g}% 이내: {len(df)}종목")

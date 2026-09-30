@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>가상매매 연습</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--line:#30363d;--tx:#e6edf3;--dim:#8b949e;--up:#f04452;--dn:#3182f6}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.4 -apple-system,"Malgun Gothic",sans-serif;-webkit-text-size-adjust:100%}
+header{padding:10px 12px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;border-bottom:1px solid var(--line)}
+h1{font-size:16px;margin:0}
+a{color:var(--dn)}
+.wrap{max-width:1100px;margin:0 auto;padding:8px 10px 40px}
+.bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}
+button{background:var(--card);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-size:14px;cursor:pointer}
+button:active{filter:brightness(1.4)}
+button.buy{background:#5c1a20;border-color:var(--up)}
+button.sell{background:#12325c;border-color:var(--dn)}
+button.main{background:#238636;border-color:#2ea043}
+button:disabled{opacity:.35}
+input[type=number]{width:62px;background:var(--card);color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:6px}
+label{color:var(--dim);font-size:12px}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:3px 6px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+.chip i{width:10px;height:10px;border-radius:50%;display:inline-block}
+#cvw{background:var(--card);border:1px solid var(--line);border-radius:10px;position:relative}
+canvas{display:block;width:100%;height:min(62vh,520px);touch-action:pan-y}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;margin:8px 0}
+.st{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 9px}
+.st b{display:block;font-size:16px;margin-top:2px}
+.up{color:var(--up)}.dn{color:var(--dn)}
+#hint{color:var(--dim);font-size:12px;margin:4px 0}
+#log{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px;max-height:180px;overflow:auto;font-size:12px;color:var(--dim)}
+#log div{padding:1px 0}
+.warn{color:var(--dim);font-size:12px;margin-top:10px}
+#msg{color:#f2cc60;min-height:18px;font-size:13px}
+</style></head><body>
+<header><h1>가상매매 연습 <span style="color:var(--dim);font-weight:400;font-size:12px">종목·날짜 숨김 / 실제 과거 시세</span></h1>
+<a href="./">← 이평선 근접 종목</a></header>
+<div class="wrap">
+ <div class="bar" id="mabar"></div>
+ <div class="bar">
+  <label>손절 <input type="number" id="sl" value="5" min="0" step="1">%</label>
+  <label>익절 <input type="number" id="tp" value="0" min="0" step="1">%</label>
+  <label>(0=사용 안 함, 장중 저가/고가 닿으면 자동 청산)</label>
+ </div>
+ <div id="cvw"><canvas id="cv"></canvas></div>
+ <div id="hint">차트를 탭/클릭하면 <b>"그 봉 종가에 샀다면 지금 몇 %"</b>를 보여줌. 최근 130개 봉만 보임.</div>
+ <div class="stats">
+  <div class="st"><span class="dim">경과</span><b id="s_day">-</b></div>
+  <div class="st"><span class="dim">현재가</span><b id="s_px">-</b></div>
+  <div class="st"><span class="dim">보유</span><b id="s_pos">-</b></div>
+  <div class="st"><span class="dim">평가손익</span><b id="s_pl">-</b></div>
+  <div class="st"><span class="dim">총자산</span><b id="s_eq">-</b></div>
+  <div class="st"><span class="dim">이번 판 수익률</span><b id="s_ret">-</b></div>
+ </div>
+ <div class="bar">
+  <button class="main" id="next">다음날 ▶</button>
+  <button id="next5">+5일 ▶▶</button>
+  <button id="next20">+20일</button>
+  <span style="width:8px"></span>
+  <button class="buy" data-b="25">매수 25%</button>
+  <button class="buy" data-b="50">50%</button>
+  <button class="buy" data-b="100">100%</button>
+  <button class="sell" data-s="50">매도 50%</button>
+  <button class="sell" data-s="100">전량</button>
+  <span style="width:8px"></span>
+  <button id="end">끝내고 공개</button>
+  <button id="new">새 판</button>
+ </div>
+ <div id="msg"></div>
+ <div class="bar"><b>누적 기록</b> <span id="hist" style="color:var(--dim)"></span> <button id="clr" style="padding:4px 8px;font-size:12px">기록 지우기</button></div>
+ <div id="log"></div>
+ <div class="warn">
+  가정: 시작 자금 1,000만원, 매수·매도 각각 0.15% 비용(왕복 0.3%), 주문은 <b>현재 봉 종가</b>에 체결(실제로는 다음날 시가라 이보다 불리할 수 있음).
+  손절/익절은 장중 저가/고가에 닿으면 그 가격에 체결, 갭이 나면 시가 체결, 같은 날 둘 다 닿으면 손절 우선.
+  데이터는 <u>지금 상장돼 있고 시총·거래대금 조건을 통과한 종목</u>만이라 상장폐지 종목이 없음 → 실전보다 결과가 좋게 나옴.
+  연습용이며 투자 권유가 아님.
+ </div>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+const FEE=0.0015, CASH0=10000000, VIS=130, MINPRE=260, MINPOST=60;
+let DATA=null, S=null;   // S: 현재 판
+const MAS=[{n:20,c:"#f2cc60",on:true},{n:60,c:"#ff9f43",on:true},{n:112,c:"#3fb950",on:true},{n:224,c:"#ffffff",on:true}];
+try{const m=JSON.parse(localStorage.getItem("sim:mas")||"null");if(m&&m.length===4)m.forEach((x,i)=>{MAS[i].n=x.n;MAS[i].on=x.on})}catch(e){}
+function saveMas(){try{localStorage.setItem("sim:mas",JSON.stringify(MAS.map(x=>({n:x.n,on:x.on}))))}catch(e){}}
+function buildMaBar(){
+ const b=$("#mabar");b.innerHTML='<label>이동평균선</label>';
+ MAS.forEach((m,i)=>{
+  const d=document.createElement("span");d.className="chip";
+  d.innerHTML=`<i style="background:${m.c}"></i><input type="checkbox" ${m.on?"checked":""}><input type="number" min="2" max="400" value="${m.n}">일`;
+  const [cb,nu]=d.querySelectorAll("input");
+  cb.onchange=()=>{m.on=cb.checked;saveMas();draw()};
+  nu.onchange=()=>{m.n=Math.max(2,Math.min(400,+nu.value||20));nu.value=m.n;saveMas();draw()};
+  b.appendChild(d);
+ });
+}
+function fmt(x){return Math.round(x).toLocaleString("ko-KR")}
+function pct(x){return (x>=0?"+":"")+(x*100).toFixed(2)+"%"}
+function cls(x){return x>0?"up":x<0?"dn":""}
+function logm(t){const d=document.createElement("div");d.textContent=t;const L=$("#log");L.prepend(d)}
+function msg(t){$("#msg").textContent=t||""}
+
+function newRound(){
+ const cand=DATA.stocks.filter(s=>s.cl.length>=MINPRE+MINPOST+50);
+ const st=cand[Math.floor(Math.random()*cand.length)];
+ const n=st.cl.length;
+ const start=MINPRE+Math.floor(Math.random()*(n-MINPRE-MINPOST));   // 현재 위치(봉 idx)
+ S={st,i:start,i0:start,cash:CASH0,sh:0,avg:0,sel:-1,done:false,trades:0,cutoff:0};
+ $("#log").innerHTML="";msg("");
+ logm("새 판 시작. 종목·날짜는 '끝내고 공개'를 누르면 보임.");
+ update();
+}
+const C=(s,i)=>s.cl[i], O=(s,i)=>s.cl[i]+s.o[i], H=(s,i)=>s.cl[i]+s.h[i], L=(s,i)=>s.cl[i]+s.l[i];
+function equity(){return S.cash+S.sh*C(S.st,S.i)}
+function limits(){return {sl:+$("#sl").value||0, tp:+$("#tp").value||0}}
+
+function step(){
+ if(S.done)return false;
+ const s=S.st;
+ if(S.i>=s.cl.length-1){msg("데이터 끝이야. 끝내고 공개를 눌러.");return false}
+ S.i++;
+ if(S.sh>0){
+  const {sl,tp}=limits();
+  const slp=sl>0?S.avg*(1-sl/100):0, tpp=tp>0?S.avg*(1+tp/100):0;
+  const o=O(s,S.i),h=H(s,S.i),l=L(s,S.i);
+  let x=0,why="";
+  if(slp&&o<=slp){x=o;why="손절(갭)"}
+  else if(slp&&l<=slp){x=slp;why="손절"}
+  else if(tpp&&o>=tpp){x=o;why="익절(갭)"}
+  else if(tpp&&h>=tpp){x=tpp;why="익절"}
+  if(x){closeAt(x,why)}
+ }
+ return true;
+}
+function closeAt(px,why){
+ const gross=S.sh*px, fee=gross*FEE, pl=(px/S.avg-1);
+ S.cash+=gross-fee;
+ logm(`D+${S.i-S.i0} ${why} ${fmt(px)}원 · 이 거래 ${pct(pl-2*FEE)}`);
+ S.sh=0;S.avg=0;S.trades++;
+}
+function buy(frac){
+ if(S.done)return;
+ const px=C(S.st,S.i), budget=Math.min(S.cash, (S.cash+S.sh*px)*frac);
+ const q=Math.floor(budget/(px*(1+FEE)));
+ if(q<=0){msg("현금이 부족해.");return}
+ const cost=q*px*(1+FEE);
+ S.avg=(S.avg*S.sh+q*px)/(S.sh+q);S.sh+=q;S.cash-=cost;
+ logm(`D+${S.i-S.i0} 매수 ${q}주 @${fmt(px)}`);msg("");update();
+}
+function sell(frac){
+ if(S.done||S.sh<=0){msg("보유 종목이 없어.");return}
+ const q=frac>=100?S.sh:Math.max(1,Math.floor(S.sh*frac/100));
+ const px=C(S.st,S.i);
+ S.cash+=q*px*(1-FEE);
+ logm(`D+${S.i-S.i0} 매도 ${q}주 @${fmt(px)} · 평단 대비 ${pct(px/S.avg-1-FEE*2)}`);
+ S.sh-=q;S.trades++;if(S.sh===0)S.avg=0;
+ msg("");update();
+}
+function stepN(n){
+ for(let k=0;k<n;k++){if(!step())break}
+ update();
+}
+function finish(){
+ if(S.done)return;
+ if(S.sh>0)closeAt(C(S.st,S.i),"종료 청산");
+ S.done=true;
+ const r=S.cash/CASH0-1, s=S.st, di=S.st.s;
+ const D=DATA.dates;
+ const bh=C(s,S.i)/C(s,S.i0)-1;
+ msg(`공개: ${s.n} (${s.m}) · ${D[s.s+S.i0]} → ${D[s.s+S.i]} · 내 수익률 ${pct(r)} · 그냥 들고만 있었으면 ${pct(bh)}`);
+ logm(`결과 ${pct(r)} (거래 ${S.trades}회, 같은 기간 보유만 ${pct(bh)})`);
+ try{const h=JSON.parse(localStorage.getItem("sim:hist")||"[]");h.push({r:+r.toFixed(4),bh:+bh.toFixed(4)});localStorage.setItem("sim:hist",JSON.stringify(h.slice(-200)))}catch(e){}
+ hist();update();
+}
+function hist(){
+ let h=[];try{h=JSON.parse(localStorage.getItem("sim:hist")||"[]")}catch(e){}
+ if(!h.length){$("#hist").textContent="아직 없음";return}
+ const avg=h.reduce((a,x)=>a+x.r,0)/h.length, w=h.filter(x=>x.r>0).length;
+ $("#hist").textContent=`${h.length}판 · 평균 ${pct(avg)} · 승 ${w} / 패 ${h.length-w}`;
+}
+
+// ---- 그리기 ----
+const cv=$("#cv"),ctx=cv.getContext("2d");
+let G=null;
+function ma(s,i,n){if(i+1<n)return NaN;let t=0;for(let k=i-n+1;k<=i;k++)t+=s.cl[k];return t/n}
+function draw(){
+ if(!S)return;
+ const dpr=window.devicePixelRatio||1,W=cv.clientWidth,Ht=cv.clientHeight;
+ cv.width=W*dpr;cv.height=Ht*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);
+ ctx.clearRect(0,0,W,Ht);
+ const s=S.st,end=S.i,beg=Math.max(0,end-VIS+1),n=end-beg+1;
+ const padL=6,padR=64,padT=10,padB=22,volH=Ht*0.16;
+ const cw=W-padL-padR,ph=Ht-padT-padB-volH;
+ let lo=Infinity,hi=-Infinity;
+ for(let i=beg;i<=end;i++){hi=Math.max(hi,H(s,i));lo=Math.min(lo,L(s,i))}
+ const mv=MAS.filter(m=>m.on).map(m=>({m,v:Array.from({length:n},(_,k)=>ma(s,beg+k,m.n))}));
+ mv.forEach(o=>o.v.forEach(x=>{if(x==x){hi=Math.max(hi,x);lo=Math.min(lo,x)}}));
+ if(S.sh>0){hi=Math.max(hi,S.avg);lo=Math.min(lo,S.avg)}
+ const {sl,tp}=limits();
+ if(S.sh>0&&sl>0)lo=Math.min(lo,S.avg*(1-sl/100));
+ if(S.sh>0&&tp>0)hi=Math.max(hi,S.avg*(1+tp/100));
+ const m=(hi-lo)*0.06||1;hi+=m;lo-=m;
+ const X=k=>padL+(k+0.5)*cw/n, Y=p=>padT+(hi-p)/(hi-lo)*ph, bw=Math.max(1,cw/n*0.68);
+ G={beg,n,X,Y,padL,padR,W,Ht,cw};
+ ctx.font="11px sans-serif";ctx.textBaseline="middle";
+ // 가격 눈금
+ ctx.strokeStyle="#21262d";ctx.fillStyle="#8b949e";ctx.lineWidth=1;
+ for(let g=0;g<=4;g++){const p=lo+(hi-lo)*g/4,y=Y(p);ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.textAlign="left";ctx.fillText(fmt(p),W-padR+4,y)}
+ // 거래량
+ let vm=0;for(let i=beg;i<=end;i++)vm=Math.max(vm,s.v[i]);
+ for(let i=beg;i<=end;i++){
+  const k=i-beg,up=C(s,i)>=O(s,i),vh=vm?s.v[i]/vm*volH*0.9:0;
+  ctx.fillStyle=up?"rgba(240,68,82,.35)":"rgba(49,130,246,.35)";ctx.fillRect(X(k)-bw/2,Ht-padB-vh,bw,vh);
+ }
+ // 캔들
+ for(let i=beg;i<=end;i++){
+  const k=i-beg,o=O(s,i),c=C(s,i),h=H(s,i),l=L(s,i),up=c>=o;
+  ctx.strokeStyle=ctx.fillStyle=up?"#f04452":"#3182f6";
+  ctx.beginPath();ctx.moveTo(X(k),Y(h));ctx.lineTo(X(k),Y(l));ctx.stroke();
+  const y1=Y(Math.max(o,c)),y2=Y(Math.min(o,c));ctx.fillRect(X(k)-bw/2,y1,bw,Math.max(1,y2-y1));
+ }
+ // 이평선
+ ctx.lineWidth=1.4;
+ mv.forEach(o=>{ctx.strokeStyle=o.m.c;ctx.beginPath();let st=false;o.v.forEach((x,k)=>{if(x!=x)return;const px=X(k),py=Y(x);st?ctx.lineTo(px,py):ctx.moveTo(px,py);st=true});ctx.stroke()});
+ // 라벨
+ ctx.textAlign="left";let lx=padL+2;
+ mv.forEach(o=>{ctx.fillStyle=o.m.c;const t=o.m.n+"일";ctx.fillText(t,lx,padT+6);lx+=ctx.measureText(t).width+10});
+ // 평단/손절/익절선
+ function hl(p,col,txt){const y=Y(p);ctx.strokeStyle=col;ctx.setLineDash([5,4]);ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=col;ctx.textAlign="left";ctx.fillText(txt,W-padR+4,y-8)}
+ if(S.sh>0){
+  hl(S.avg,"#d2a8ff","평단");
+  if(sl>0)hl(S.avg*(1-sl/100),"#3182f6","손절");
+  if(tp>0)hl(S.avg*(1+tp/100),"#f04452","익절");
+ }
+ // 현재가 태그
+ const cp=C(s,end),cy=Y(cp);ctx.fillStyle="#e6edf3";ctx.fillRect(W-padR,cy-9,padR-2,18);ctx.fillStyle="#0d1117";ctx.textAlign="left";ctx.fillText(fmt(cp),W-padR+4,cy);
+ // 선택한 봉에서 산 가정
+ if(S.sel>=beg&&S.sel<=end){
+  const k=S.sel-beg,bp=C(s,S.sel),r=cp/bp-1-2*FEE,y=Y(bp);
+  ctx.strokeStyle="#f2cc60";ctx.setLineDash([2,3]);ctx.beginPath();ctx.moveTo(X(k),y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.setLineDash([]);
+  ctx.beginPath();ctx.arc(X(k),y,4,0,7);ctx.fillStyle="#f2cc60";ctx.fill();
+  // 그 이후 최저/최고
+  let mn=Infinity,mx=-Infinity;for(let i=S.sel;i<=end;i++){mn=Math.min(mn,L(s,i));mx=Math.max(mx,H(s,i))}
+  const t1=`이 봉 종가 ${fmt(bp)}에 샀다면 → 지금 ${pct(r)} (${S.i-S.sel}일)`,t2=`중간 최저 ${pct(mn/bp-1)} / 최고 ${pct(mx/bp-1)}`;
+  ctx.font="12px sans-serif";const tw=Math.max(ctx.measureText(t1).width,ctx.measureText(t2).width)+12;
+  ctx.fillStyle="rgba(22,27,34,.92)";ctx.fillRect(padL,padT+14,tw,36);
+  ctx.fillStyle=r>=0?"#f04452":"#3182f6";ctx.textAlign="left";ctx.fillText(t1,padL+6,padT+24);ctx.fillStyle="#8b949e";ctx.fillText(t2,padL+6,padT+42);ctx.font="11px sans-serif";
+ }
+ // x축: 경과일
+ ctx.fillStyle="#8b949e";ctx.textAlign="center";
+ for(let g=0;g<=4;g++){const k=Math.round((n-1)*g/4),i=beg+k;ctx.textAlign=g==0?"left":g==4?"right":"center";ctx.fillText(S.done?DATA.dates[s.s+i].replace(/(\d{4})(\d\d)(\d\d)/,"$1-$2-$3"):"D"+(i-S.i0>=0?"+":"")+(i-S.i0),g==0?padL:g==4?W-padR:X(k),Ht-8)}
+}
+function update(){
+ const s=S.st,px=C(s,S.i),eq=equity(),pl=S.sh>0?(px/S.avg-1):0;
+ $("#s_day").textContent=S.done?"종료":"D+"+(S.i-S.i0);
+ $("#s_px").textContent=fmt(px)+"원";
+ $("#s_pos").textContent=S.sh>0?`${fmt(S.sh)}주 @${fmt(S.avg)}`:"없음";
+ const p=$("#s_pl");p.textContent=S.sh>0?pct(pl)+" ("+fmt(S.sh*(px-S.avg))+"원)":"-";p.className=cls(pl);
+ $("#s_eq").textContent=fmt(eq)+"원";
+ const r=eq/CASH0-1,e=$("#s_ret");e.textContent=pct(r);e.className=cls(r);
+ document.querySelectorAll("button").forEach(b=>{if(b.id!=="new"&&b.id!=="clr")b.disabled=S.done});
+ draw();
+}
+cv.addEventListener("pointerdown",e=>{
+ if(!S||!G)return;
+ const r=cv.getBoundingClientRect(),x=e.clientX-r.left;
+ const k=Math.round((x-G.padL)/G.cw*G.n-0.5);
+ if(k<0||k>=G.n)return;
+ S.sel=(S.sel===G.beg+k)?-1:G.beg+k;draw();
+});
+addEventListener("resize",draw);
+$("#next").onclick=()=>stepN(1);$("#next5").onclick=()=>stepN(5);$("#next20").onclick=()=>stepN(20);
+document.querySelectorAll("[data-b]").forEach(b=>b.onclick=()=>buy(+b.dataset.b/100));
+document.querySelectorAll("[data-s]").forEach(b=>b.onclick=()=>sell(+b.dataset.s));
+$("#end").onclick=finish;$("#new").onclick=newRound;
+$("#clr").onclick=()=>{try{localStorage.removeItem("sim:hist")}catch(e){}hist()};
+$("#sl").onchange=$("#tp").onchange=()=>S&&draw();
+buildMaBar();hist();
+fetch("sim_data.json").then(r=>{if(!r.ok)throw 0;return r.json()}).then(d=>{DATA=d;newRound()}).catch(()=>{msg("sim_data.json을 못 불러왔어. 스캔이 한 번 돌아야 생겨.")});
+</script></body></html>

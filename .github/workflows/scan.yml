@@ -6,6 +6,8 @@ on:
     paths:
       - scan_ma.py
       - report.py
+      - simdata.py
+      - sim.html
       - requirements.txt
       - .github/workflows/scan.yml
   schedule:
@@ -58,6 +60,8 @@ jobs:
           mkdir -p site
           { echo "== net check =="; cat net_check.txt; echo; echo "== scan log =="; cat scan_log.txt; } > site/log.txt 2>&1 || true
           cp results/latest.html site/index.html || echo "scan failed - see log.txt" > site/index.html
+          cp results/sim_data.json site/ || true
+          cp sim.html site/ || true
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
