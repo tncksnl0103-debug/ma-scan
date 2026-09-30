@@ -1,0 +1,23 @@
+== fchart minute count=5000 ==
+http 200 bytes 257836
+3809
+data="202609210900
+data="202609210901
+grep: write error: Broken pipe
+data="202609301958
+data="202609301959
+
+== api.stock.naver.com minute ==
+http 200 bytes 547508
+[{"localDateTime":"20260921090000","currentPrice":264500.0,"openPrice":264000.0,"highPrice":264500.0,"lowPrice":263500.0,"accumulatedTradingVolume":314496},{"localDateTime":"20260921090100","currentPrice":267000.0,"openPrice":264500.0,"highPrice":268000.0,"lowPrice":264000.0,"accumulatedTradingVolume":266575},{"localDateTime":"20260921090200","currentPrice":268000.0,"openPrice":267500.0,"highPrice
+list 3570
+{'localDateTime': '20260921090000', 'currentPrice': 264500.0, 'openPrice': 264000.0, 'highPrice': 264500.0, 'lowPrice': 263500.0, 'accumulatedTradingVolume': 314496}
+{'localDateTime': '20260930160000', 'currentPrice': 269500.0, 'openPrice': 269500.0, 'highPrice': 269500.0, 'lowPrice': 269500.0, 'accumulatedTradingVolume': 149}
+
+== api.stock.naver.com minute older (2026-03) ==
+http 200 bytes 2
+[]
+
+== m.stock front-api ==
+http 400 bytes 171
+{"detailCode":"invalid_value","message":"{\"formErrors\":[],\"fieldErrors\":{\"timeframe\":[\"Invalid option: expected one of \\\"day\\\"|\\\"week\\\"|\\\"month\\\"\"]}}"}
