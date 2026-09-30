@@ -1,0 +1,44 @@
+name: Backtest
+
+on:
+  workflow_dispatch: {}
+  push:
+    paths:
+      - backtest.py
+      - .github/workflows/backtest.yml
+
+permissions:
+  contents: write
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Run backtest
+        id: bt
+        continue-on-error: true
+        run: python backtest.py
+
+      - name: Save result to repo
+        run: |
+          mkdir -p backtest
+          cp bt_result.md backtest/result.md || true
+          cp scan_log.txt backtest/log.txt || true
+          git config user.name "github-actions"
+          git config user.email "actions@users.noreply.github.com"
+          git add backtest
+          git commit -m "backtest result" || exit 0
+          git pull --rebase origin main
+          git push
+
+      - name: Fail if backtest failed
+        if: steps.bt.outcome == 'failure'
+        run: exit 1
