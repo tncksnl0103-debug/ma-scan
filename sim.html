@@ -53,7 +53,7 @@ canvas.pan{cursor:grab}
   <label>(보유 중일 때 위쪽 선=익절, 아래쪽 선=손절처럼 작동 · 스페이스바=봉 선택, Esc=선택 해제)</label>
  </div>
  <div id="cvw"><canvas id="cv"></canvas></div>
- <div id="hint">차트는 <b>드래그로 좌우 이동, 휠·핀치·＋－로 확대/축소</b>(선 도구 켠 상태에서 마우스 이동은 Shift+드래그). 봉 위에 마우스를 올리면 시/고/저/종가가 뜨고, 선은 봉 끝(시·고·저·종)에 자동으로 붙어. '봉 선택'에서 선을 탭하면 선택돼서 Delete로 지울 수 있어. 봉을 탭하면 <b>"그 봉 종가에 샀다면 지금 몇 %"</b>를 보여줌. 선은 일/주/월봉 어디서 그어도 다 보여. 새 판이면 사라져. 최근 130개 봉만 보임.</div>
+ <div id="hint">차트는 <b>드래그로 좌우 이동, 휠·핀치·＋－로 확대/축소</b>(선 도구 켠 상태에서 마우스 이동은 Shift+드래그). 봉 위에 마우스를 올리면 시/고/저/종가가 뜨고, 선은 봉 끝(시·고·저·종)에 자동으로 붙어. '봉 선택'에서 선을 잡고 끌면 이동(추세선은 끝점을 끌면 각도 조절), 선택하면 Delete로 지울 수 있어. 봉을 탭하면 <b>"그 봉 종가에 샀다면 지금 몇 %"</b>를 보여줌. 선은 일/주/월봉 어디서 그어도 다 보여. 새 판이면 사라져. 최근 130개 봉만 보임.</div>
  <div class="stats">
   <div class="st"><span class="dim">경과</span><b id="s_day">-</b></div>
   <div class="st"><span class="dim">현재가</span><b id="s_px">-</b></div>
@@ -369,7 +369,7 @@ function hitLine(x,y){
  return bi;
 }
 function delSel(){if(S&&S.selLine>=0){S.lines.splice(S.selLine,1);S.selLine=-1;$("#dellin").disabled=true;draw()}}
-const PT=new Map();let PAN=null,DR=null,PINCH=null;
+const PT=new Map();let PAN=null,DR=null,PINCH=null,LD=null;
 function xy(e){const r=cv.getBoundingClientRect();return {x:e.clientX-r.left,y:e.clientY-r.top}}
 const uAt=x=>G.first+(x-G.padL)/G.bwid, priceAt=y=>G.hi-(y-G.padT)/G.ph*(G.hi-G.lo);
 function zoomAt(f,x){
@@ -384,6 +384,15 @@ cv.addEventListener("pointerdown",e=>{
  PT.set(e.pointerId,xy(e));cv.setPointerCapture(e.pointerId);
  if(PT.size===2){const [a,b]=[...PT.values()];PINCH={d:Math.hypot(a.x-b.x,a.y-b.y),V0:V};PAN=null;DR=null;S.tmp=null;return}
  const q=xy(e);
+ if(TOOL==="cur"&&!e.shiftKey){
+  const hl=hitLine(q.x,q.y);
+  if(hl>=0){
+   const l=S.lines[hl];let mode="all";
+   if(l.t==="t"){const X=d=>G.padL+(d2u(d)-G.first)*G.bwid,Yp=p=>G.padT+(G.hi-p)/(G.hi-G.lo)*G.ph;
+    if(Math.hypot(q.x-X(l.d1),q.y-Yp(l.p1))<14)mode="p1";else if(Math.hypot(q.x-X(l.d2),q.y-Yp(l.p2))<14)mode="p2"}
+   S.selLine=hl;S.sel=-1;S.hb=-1;$("#dellin").disabled=false;
+   LD={i:hl,mode,x0:q.x,y0:q.y,o:JSON.parse(JSON.stringify(l))};draw();return}
+ }
  if(TOOL==="cur"||e.shiftKey){PAN={x0:q.x,off0:OFF,moved:false};return}
  e.preventDefault();
  const sn=snap(q.x,q.y),d=sn.d,p=sn.p;
@@ -394,6 +403,13 @@ cv.addEventListener("pointermove",e=>{
  if(!S||!G||!PT.has(e.pointerId))return;
  const q=xy(e);PT.set(e.pointerId,q);
  if(PINCH&&PT.size>=2){const [a,b]=[...PT.values()];const d=Math.hypot(a.x-b.x,a.y-b.y);if(d>5){const nV=PINCH.V0*PINCH.d/d;zoomAt(nV/V,(a.x+b.x)/2)}return}
+ if(LD){
+  const l=S.lines[LD.i],o=LD.o,dp=priceAt(q.y)-priceAt(LD.y0),dd=u2d(uAt(q.x))-u2d(uAt(LD.x0));
+  if(l.t==="h")l.p=o.p+dp;
+  else if(LD.mode==="p1"){l.d1=o.d1+dd;l.p1=o.p1+dp}
+  else if(LD.mode==="p2"){l.d2=o.d2+dd;l.p2=o.p2+dp}
+  else{l.d1=o.d1+dd;l.d2=o.d2+dd;l.p1=o.p1+dp;l.p2=o.p2+dp}
+  draw();return}
  if(PAN){const dx=q.x-PAN.x0;if(Math.abs(dx)>4)PAN.moved=true;if(PAN.moved){OFF=PAN.off0+dx/G.bwid;draw()}return}
  if(DR){S.snapPt=null;const sn=snap(q.x,q.y);S.tmp={t:"t",d1:DR.d,p1:DR.p,d2:sn.d,p2:sn.p};draw()}
 });
@@ -415,7 +431,7 @@ function up(e){
   else{S.selLine=-1;if(gi>=0&&gi<B.length){const d=B[gi].b;S.sel=(S.sel===d)?-1:d;S.hb=gi}}
   $("#dellin").disabled=S.selLine<0;
  }
- PAN=null;
+ PAN=null;LD=null;
  if(DR){DR=null;const t=S.tmp;S.tmp=null;if(t&&Math.abs(t.d2-t.d1)>=0.5)S.lines.push(t)}
  draw();
 }
@@ -450,6 +466,15 @@ $("#undo").onclick=()=>{if(S){S.lines.pop();draw()}};
 $("#clrl").onclick=()=>{if(S){S.lines=[];draw()}};
 $("#clr").onclick=()=>{try{localStorage.removeItem("sim:hist")}catch(e){}hist()};
 cv.classList.add("pan");
+const VER="__VER__";
+(function(){ // 배포 때 바뀐 버전이면 캐시를 피해 새 주소로 다시 연다
+ if(VER.startsWith("__"))return;
+ fetch("version.txt?t="+Date.now(),{cache:"no-store"}).then(r=>r.ok?r.text():"").then(t=>{
+  t=(t||"").trim();if(!t||t===VER)return;
+  const u=new URL(location.href);if(u.searchParams.get("v")===t)return;
+  u.searchParams.set("v",t);location.replace(u.toString());
+ }).catch(()=>{});
+})();
 buildMaBar();hist();
 fetch("sim_data.json").then(r=>{if(!r.ok)throw 0;return r.json()}).then(d=>{DATA=d;prep();newRound()}).catch(()=>{msg("sim_data.json을 못 불러왔어. 스캔이 한 번 돌아야 생겨.")});
 </script></body></html>

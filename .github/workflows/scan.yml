@@ -62,6 +62,8 @@ jobs:
           cp results/latest.html site/index.html || echo "scan failed - see log.txt" > site/index.html
           cp results/sim_data.json site/ || true
           cp sim.html site/ || true
+          sed -i "s/__VER__/${GITHUB_SHA}/" site/sim.html || true
+          echo "${GITHUB_SHA}" > site/version.txt
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
