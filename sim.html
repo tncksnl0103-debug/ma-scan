@@ -25,6 +25,7 @@ label{color:var(--dim);font-size:12px}
 #cvw{background:var(--card);border:1px solid var(--line);border-radius:10px;position:relative}
 canvas{display:block;width:100%;height:min(62vh,520px);touch-action:pan-y}
 canvas.draw{touch-action:none;cursor:crosshair}
+canvas.pan{cursor:grab}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;margin:8px 0}
 .st{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 9px}
 .st b{display:block;font-size:16px;margin-top:2px}
@@ -39,6 +40,10 @@ canvas.draw{touch-action:none;cursor:crosshair}
 <a href="./">← 이평선 근접 종목</a></header>
 <div class="wrap">
  <div class="bar" id="mabar"></div>
+ <div class="bar" id="tfbar"><label>봉</label>
+  <button data-tf="D" class="on">일봉</button><button data-tf="W">주봉</button><button data-tf="M">월봉</button>
+  <span style="width:8px"></span><button id="zin">＋ 확대</button><button id="zout">－ 축소</button><button id="zlatest">최신으로</button>
+ </div>
  <div class="bar" id="tools"><label>도구</label>
   <button data-t="cur" class="on">👆 봉 선택</button><button data-t="tr">╱ 추세선</button><button data-t="hz">─ 수평선</button><button id="undo">되돌리기</button><button id="clrl">선 전체 삭제</button>
  </div>
@@ -48,7 +53,7 @@ canvas.draw{touch-action:none;cursor:crosshair}
   <label>(0=사용 안 함, 장중 저가/고가 닿으면 자동 청산)</label>
  </div>
  <div id="cvw"><canvas id="cv"></canvas></div>
- <div id="hint">'봉 선택'에서 차트를 탭하면 <b>"그 봉 종가에 샀다면 지금 몇 %"</b>를 보여줌. 선은 판이 끝나면 사라져. 최근 130개 봉만 보임.</div>
+ <div id="hint">차트는 <b>드래그로 좌우 이동, 휠·핀치·＋－로 확대/축소</b>(선 도구 켠 상태에서 마우스 이동은 Shift+드래그). '봉 선택'에서 봉을 탭하면 <b>"그 봉 종가에 샀다면 지금 몇 %"</b>를 보여줌. 선은 일/주/월봉 어디서 그어도 다 보여. 새 판이면 사라져. 최근 130개 봉만 보임.</div>
  <div class="stats">
   <div class="st"><span class="dim">경과</span><b id="s_day">-</b></div>
   <div class="st"><span class="dim">현재가</span><b id="s_px">-</b></div>
@@ -83,237 +88,297 @@ canvas.draw{touch-action:none;cursor:crosshair}
 </div>
 <script>
 const $=s=>document.querySelector(s);
-const FEE=0.0015, CASH0=10000000, VIS=130, MINPRE=260, MINPOST=60;
-let DATA=null, S=null;   // S: 현재 판
+const FEE=0.0015, CASH0=10000000, MINPRE=260, MINPOST=60;
+const DEFV={D:130,W:104,M:60};
+let DATA=null, S=null, TF="D", V=130, OFF=0, TOOL="cur", VC=null;
 const MAS=[{n:20,c:"#f2cc60",on:true},{n:60,c:"#ff9f43",on:true},{n:112,c:"#3fb950",on:true},{n:224,c:"#ffffff",on:true}];
 try{const m=JSON.parse(localStorage.getItem("sim:mas")||"null");if(m&&m.length===4)m.forEach((x,i)=>{MAS[i].n=x.n;MAS[i].on=x.on})}catch(e){}
 function saveMas(){try{localStorage.setItem("sim:mas",JSON.stringify(MAS.map(x=>({n:x.n,on:x.on}))))}catch(e){}}
 function buildMaBar(){
  const b=$("#mabar");b.innerHTML='<label>이동평균선</label>';
- MAS.forEach((m,i)=>{
+ MAS.forEach(m=>{
   const d=document.createElement("span");d.className="chip";
-  d.innerHTML=`<i style="background:${m.c}"></i><input type="checkbox" ${m.on?"checked":""}><input type="number" min="2" max="400" value="${m.n}">일`;
+  d.innerHTML=`<i style="background:${m.c}"></i><input type="checkbox" ${m.on?"checked":""}><input type="number" min="2" max="400" value="${m.n}">봉`;
   const [cb,nu]=d.querySelectorAll("input");
   cb.onchange=()=>{m.on=cb.checked;saveMas();draw()};
   nu.onchange=()=>{m.n=Math.max(2,Math.min(400,+nu.value||20));nu.value=m.n;saveMas();draw()};
   b.appendChild(d);
  });
 }
-function fmt(x){return Math.round(x).toLocaleString("ko-KR")}
-function pct(x){return (x>=0?"+":"")+(x*100).toFixed(2)+"%"}
-function cls(x){return x>0?"up":x<0?"dn":""}
-function logm(t){const d=document.createElement("div");d.textContent=t;const L=$("#log");L.prepend(d)}
+const fmt=x=>Math.round(x).toLocaleString("ko-KR");
+const pct=x=>(x>=0?"+":"")+(x*100).toFixed(2)+"%";
+const cls=x=>x>0?"up":x<0?"dn":"";
+function logm(t){const d=document.createElement("div");d.textContent=t;$("#log").prepend(d)}
 function msg(t){$("#msg").textContent=t||""}
+const C=(s,i)=>s.cl[i], O=(s,i)=>s.cl[i]+s.o[i], H=(s,i)=>s.cl[i]+s.h[i], L=(s,i)=>s.cl[i]+s.l[i];
+
+// 날짜 키(주/월)
+function prep(){
+ const D=DATA.dates;DATA.wk=new Array(D.length);DATA.mo=new Array(D.length);
+ for(let g=0;g<D.length;g++){
+  const d=D[g],t=Date.UTC(+d.slice(0,4),+d.slice(4,6)-1,+d.slice(6,8))/864e5,dow=new Date(t*864e5).getUTCDay();
+  DATA.wk[g]=Math.floor(t-((dow+6)%7));DATA.mo[g]=d.slice(0,6);
+ }
+}
+function bars(){
+ const key=S.st.c+"|"+TF+"|"+S.i;
+ if(VC&&VC.key===key)return VC;
+ const s=S.st,B=[],dg=new Array(S.i+1),g0=s.s;
+ let last=null;
+ for(let i=0;i<=S.i;i++){
+  const k=TF==="D"?i:TF==="W"?DATA.wk[g0+i]:DATA.mo[g0+i];
+  if(k!==last){B.push({o:O(s,i),h:H(s,i),l:L(s,i),c:C(s,i),v:s.v[i],a:i,b:i});last=k}
+  else{const b=B[B.length-1];b.h=Math.max(b.h,H(s,i));b.l=Math.min(b.l,L(s,i));b.c=C(s,i);b.v+=s.v[i];b.b=i}
+  dg[i]=B.length-1;
+ }
+ const pre=new Float64Array(B.length+1);B.forEach((b,i)=>pre[i+1]=pre[i]+b.c);
+ VC={key,B,dg,pre};return VC;
+}
+// 일봉 idx(실수) <-> 연속 좌표 u (봉 gi는 [gi,gi+1) 구간, 중심 gi+0.5)
+function d2u(d){const {B,dg}=VC;const di=Math.max(0,Math.min(S.i,Math.round(d)));const gi=dg[di],b=B[gi];return gi+(d-b.a+0.5)/(b.b-b.a+1)}
+function u2d(u){const {B}=VC;const gi=Math.max(0,Math.min(B.length-1,Math.floor(u))),b=B[gi];return b.a+(u-gi)*(b.b-b.a+1)-0.5}
 
 function newRound(){
  const cand=DATA.stocks.filter(s=>s.cl.length>=MINPRE+MINPOST+50);
  const st=cand[Math.floor(Math.random()*cand.length)];
- const n=st.cl.length;
- const start=MINPRE+Math.floor(Math.random()*(n-MINPRE-MINPOST));   // 현재 위치(봉 idx)
- S={lines:[],st,i:start,i0:start,cash:CASH0,sh:0,avg:0,sel:-1,done:false,trades:0,cutoff:0};
+ const start=MINPRE+Math.floor(Math.random()*(st.cl.length-MINPRE-MINPOST));
+ S={lines:[],tl:[],st,i:start,i0:start,cash:CASH0,sh:0,avg:0,sel:-1,done:false,tc:0,endI:-1,endEq:0};
+ VC=null;OFF=0;V=DEFV[TF];
  $("#log").innerHTML="";msg("");
  logm("새 판 시작. 종목·날짜는 '끝내고 공개'를 누르면 보임.");
  update();
 }
-const C=(s,i)=>s.cl[i], O=(s,i)=>s.cl[i]+s.o[i], H=(s,i)=>s.cl[i]+s.h[i], L=(s,i)=>s.cl[i]+s.l[i];
-function equity(){return S.cash+S.sh*C(S.st,S.i)}
-function limits(){return {sl:+$("#sl").value||0, tp:+$("#tp").value||0}}
+const equity=()=>S.cash+S.sh*C(S.st,S.i);
+const limits=()=>({sl:+$("#sl").value||0,tp:+$("#tp").value||0});
 
 function step(){
- if(S.done)return false;
  const s=S.st;
- if(S.i>=s.cl.length-1){msg("데이터 끝이야. 끝내고 공개를 눌러.");return false}
+ if(S.i>=s.cl.length-1){msg("데이터 끝이야.");return false}
  S.i++;
- if(S.sh>0){
+ if(S.sh>0&&!S.done){
   const {sl,tp}=limits();
-  const slp=sl>0?S.avg*(1-sl/100):0, tpp=tp>0?S.avg*(1+tp/100):0;
+  const slp=sl>0?S.avg*(1-sl/100):0,tpp=tp>0?S.avg*(1+tp/100):0;
   const o=O(s,S.i),h=H(s,S.i),l=L(s,S.i);
   let x=0,why="";
   if(slp&&o<=slp){x=o;why="손절(갭)"}
   else if(slp&&l<=slp){x=slp;why="손절"}
   else if(tpp&&o>=tpp){x=o;why="익절(갭)"}
   else if(tpp&&h>=tpp){x=tpp;why="익절"}
-  if(x){closeAt(x,why)}
+  if(x)closeAt(x,why);
  }
  return true;
 }
 function closeAt(px,why){
- const gross=S.sh*px, fee=gross*FEE, pl=(px/S.avg-1);
- S.cash+=gross-fee;
+ const pl=px/S.avg-1;
+ S.cash+=S.sh*px*(1-FEE);
+ S.tl.push({i:S.i,side:"S",px});
  logm(`D+${S.i-S.i0} ${why} ${fmt(px)}원 · 이 거래 ${pct(pl-2*FEE)}`);
- S.sh=0;S.avg=0;S.trades++;
+ S.sh=0;S.avg=0;S.tc++;
 }
 function buy(frac){
  if(S.done)return;
- const px=C(S.st,S.i), budget=Math.min(S.cash, (S.cash+S.sh*px)*frac);
+ const px=C(S.st,S.i),budget=Math.min(S.cash,(S.cash+S.sh*px)*frac);
  const q=Math.floor(budget/(px*(1+FEE)));
  if(q<=0){msg("현금이 부족해.");return}
- const cost=q*px*(1+FEE);
- S.avg=(S.avg*S.sh+q*px)/(S.sh+q);S.sh+=q;S.cash-=cost;
+ S.avg=(S.avg*S.sh+q*px)/(S.sh+q);S.sh+=q;S.cash-=q*px*(1+FEE);
+ S.tl.push({i:S.i,side:"B",px});
  logm(`D+${S.i-S.i0} 매수 ${q}주 @${fmt(px)}`);msg("");update();
 }
 function sell(frac){
  if(S.done||S.sh<=0){msg("보유 종목이 없어.");return}
- const q=frac>=100?S.sh:Math.max(1,Math.floor(S.sh*frac/100));
- const px=C(S.st,S.i);
+ const q=frac>=100?S.sh:Math.max(1,Math.floor(S.sh*frac/100)),px=C(S.st,S.i);
  S.cash+=q*px*(1-FEE);
+ S.tl.push({i:S.i,side:"S",px});
  logm(`D+${S.i-S.i0} 매도 ${q}주 @${fmt(px)} · 평단 대비 ${pct(px/S.avg-1-FEE*2)}`);
- S.sh-=q;S.trades++;if(S.sh===0)S.avg=0;
+ S.sh-=q;S.tc++;if(S.sh===0)S.avg=0;
  msg("");update();
 }
-function stepN(n){
- for(let k=0;k<n;k++){if(!step())break}
- update();
-}
+function stepN(n){for(let k=0;k<n;k++){if(!step())break}update()}
 function finish(){
  if(S.done)return;
  if(S.sh>0)closeAt(C(S.st,S.i),"종료 청산");
- S.done=true;
- const r=S.cash/CASH0-1, s=S.st, di=S.st.s;
- const D=DATA.dates;
- const bh=C(s,S.i)/C(s,S.i0)-1;
- msg(`공개: ${s.n} (${s.m}) · ${D[s.s+S.i0]} → ${D[s.s+S.i]} · 내 수익률 ${pct(r)} · 그냥 들고만 있었으면 ${pct(bh)}`);
- logm(`결과 ${pct(r)} (거래 ${S.trades}회, 같은 기간 보유만 ${pct(bh)})`);
+ S.done=true;S.endI=S.i;S.endEq=S.cash;
+ const r=S.cash/CASH0-1,s=S.st,bh=C(s,S.i)/C(s,S.i0)-1;
+ logm(`결과 ${pct(r)} (거래 ${S.tc}회, 같은 기간 보유만 ${pct(bh)}). 공개 후에도 다음날/5일/20일로 더 볼 수 있어.`);
  try{const h=JSON.parse(localStorage.getItem("sim:hist")||"[]");h.push({r:+r.toFixed(4),bh:+bh.toFixed(4)});localStorage.setItem("sim:hist",JSON.stringify(h.slice(-200)))}catch(e){}
  hist();update();
 }
 function hist(){
  let h=[];try{h=JSON.parse(localStorage.getItem("sim:hist")||"[]")}catch(e){}
  if(!h.length){$("#hist").textContent="아직 없음";return}
- const avg=h.reduce((a,x)=>a+x.r,0)/h.length, w=h.filter(x=>x.r>0).length;
+ const avg=h.reduce((a,x)=>a+x.r,0)/h.length,w=h.filter(x=>x.r>0).length;
  $("#hist").textContent=`${h.length}판 · 평균 ${pct(avg)} · 승 ${w} / 패 ${h.length-w}`;
 }
 
 // ---- 그리기 ----
 const cv=$("#cv"),ctx=cv.getContext("2d");
 let G=null;
-function ma(s,i,n){if(i+1<n)return NaN;let t=0;for(let k=i-n+1;k<=i;k++)t+=s.cl[k];return t/n}
+function fixView(nb){
+ V=Math.max(15,Math.min(V,Math.max(30,nb+10)));
+ OFF=Math.max(0,Math.min(OFF,nb-10));
+}
 function draw(){
  if(!S)return;
  const dpr=window.devicePixelRatio||1,W=cv.clientWidth,Ht=cv.clientHeight;
- cv.width=W*dpr;cv.height=Ht*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);
- ctx.clearRect(0,0,W,Ht);
- const s=S.st,end=S.i,beg=Math.max(0,end-VIS+1),n=end-beg+1;
- const padL=6,padR=64,padT=10,padB=22,volH=Ht*0.16;
- const cw=W-padL-padR,ph=Ht-padT-padB-volH;
+ cv.width=W*dpr;cv.height=Ht*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,Ht);
+ const s=S.st,{B,dg,pre}=bars(),nb=B.length;
+ fixView(nb);
+ const end=nb-1-Math.round(OFF),first=end-Math.round(V)+1,Vn=Math.round(V);
+ const padL=6,padR=64,padT=10,padB=22,volH=Ht*0.16,cw=W-padL-padR,ph=Ht-padT-padB-volH,bwid=cw/Vn;
+ const b0=Math.max(0,first);
+ const maV=MAS.filter(m=>m.on).map(m=>({m,f:i=>i+1>=m.n?(pre[i+1]-pre[i+1-m.n])/m.n:NaN}));
  let lo=Infinity,hi=-Infinity;
- for(let i=beg;i<=end;i++){hi=Math.max(hi,H(s,i));lo=Math.min(lo,L(s,i))}
- const mv=MAS.filter(m=>m.on).map(m=>({m,v:Array.from({length:n},(_,k)=>ma(s,beg+k,m.n))}));
- mv.forEach(o=>o.v.forEach(x=>{if(x==x){hi=Math.max(hi,x);lo=Math.min(lo,x)}}));
- if(S.sh>0){hi=Math.max(hi,S.avg);lo=Math.min(lo,S.avg)}
+ for(let i=b0;i<=end;i++){hi=Math.max(hi,B[i].h);lo=Math.min(lo,B[i].l);maV.forEach(o=>{const x=o.f(i);if(x==x){hi=Math.max(hi,x);lo=Math.min(lo,x)}})}
  const {sl,tp}=limits();
- if(S.sh>0&&sl>0)lo=Math.min(lo,S.avg*(1-sl/100));
- if(S.sh>0&&tp>0)hi=Math.max(hi,S.avg*(1+tp/100));
- const m=(hi-lo)*0.06||1;hi+=m;lo-=m;
- const X=k=>padL+(k+0.5)*cw/n, Y=p=>padT+(hi-p)/(hi-lo)*ph, bw=Math.max(1,cw/n*0.68);
- G={beg,n,X,Y,padL,padR,W,Ht,cw,lo,hi,ph,padT};
+ if(S.sh>0){hi=Math.max(hi,S.avg);lo=Math.min(lo,S.avg);if(sl>0)lo=Math.min(lo,S.avg*(1-sl/100));if(tp>0)hi=Math.max(hi,S.avg*(1+tp/100))}
+ const m=(hi-lo)*0.08||1;hi+=m;lo-=m;
+ const Y=p=>padT+(hi-p)/(hi-lo)*ph, XU=u=>padL+(u-first)*bwid, XB=i=>XU(i+0.5), bw=Math.max(1,bwid*0.68);
+ G={first,Vn,bwid,padL,padR,padT,W,Ht,cw,lo,hi,ph,nb,end};
  ctx.font="11px sans-serif";ctx.textBaseline="middle";
- // 가격 눈금
- ctx.strokeStyle="#21262d";ctx.fillStyle="#8b949e";ctx.lineWidth=1;
- for(let g=0;g<=4;g++){const p=lo+(hi-lo)*g/4,y=Y(p);ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.textAlign="left";ctx.fillText(fmt(p),W-padR+4,y)}
- // 거래량
- let vm=0;for(let i=beg;i<=end;i++)vm=Math.max(vm,s.v[i]);
- for(let i=beg;i<=end;i++){
-  const k=i-beg,up=C(s,i)>=O(s,i),vh=vm?s.v[i]/vm*volH*0.9:0;
-  ctx.fillStyle=up?"rgba(240,68,82,.35)":"rgba(49,130,246,.35)";ctx.fillRect(X(k)-bw/2,Ht-padB-vh,bw,vh);
+ ctx.strokeStyle="#21262d";ctx.fillStyle="#8b949e";ctx.lineWidth=1;ctx.textAlign="left";
+ for(let g=0;g<=4;g++){const p=lo+(hi-lo)*g/4,y=Y(p);ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.fillText(fmt(p),W-padR+4,y)}
+ ctx.save();ctx.beginPath();ctx.rect(padL,0,cw,Ht);ctx.clip();
+ let vm=0;for(let i=b0;i<=end;i++)vm=Math.max(vm,B[i].v);
+ for(let i=b0;i<=end;i++){
+  const b=B[i],up=b.c>=b.o,vh=vm?b.v/vm*volH*0.9:0;
+  ctx.fillStyle=up?"rgba(240,68,82,.35)":"rgba(49,130,246,.35)";ctx.fillRect(XB(i)-bw/2,Ht-padB-vh,bw,vh);
  }
- // 캔들
- for(let i=beg;i<=end;i++){
-  const k=i-beg,o=O(s,i),c=C(s,i),h=H(s,i),l=L(s,i),up=c>=o;
+ for(let i=b0;i<=end;i++){
+  const b=B[i],up=b.c>=b.o,x=XB(i);
   ctx.strokeStyle=ctx.fillStyle=up?"#f04452":"#3182f6";
-  ctx.beginPath();ctx.moveTo(X(k),Y(h));ctx.lineTo(X(k),Y(l));ctx.stroke();
-  const y1=Y(Math.max(o,c)),y2=Y(Math.min(o,c));ctx.fillRect(X(k)-bw/2,y1,bw,Math.max(1,y2-y1));
+  ctx.beginPath();ctx.moveTo(x,Y(b.h));ctx.lineTo(x,Y(b.l));ctx.stroke();
+  const y1=Y(Math.max(b.o,b.c)),y2=Y(Math.min(b.o,b.c));ctx.fillRect(x-bw/2,y1,bw,Math.max(1,y2-y1));
  }
- // 이평선
  ctx.lineWidth=1.4;
- mv.forEach(o=>{ctx.strokeStyle=o.m.c;ctx.beginPath();let st=false;o.v.forEach((x,k)=>{if(x!=x)return;const px=X(k),py=Y(x);st?ctx.lineTo(px,py):ctx.moveTo(px,py);st=true});ctx.stroke()});
- // 라벨
- ctx.textAlign="left";let lx=padL+2;
- mv.forEach(o=>{ctx.fillStyle=o.m.c;const t=o.m.n+"일";ctx.fillText(t,lx,padT+6);lx+=ctx.measureText(t).width+10});
- // 평단/손절/익절선
- function hl(p,col,txt){const y=Y(p);ctx.strokeStyle=col;ctx.setLineDash([5,4]);ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=col;ctx.textAlign="left";ctx.fillText(txt,W-padR+4,y-8)}
- if(S.sh>0){
-  hl(S.avg,"#d2a8ff","평단");
-  if(sl>0)hl(S.avg*(1-sl/100),"#3182f6","손절");
-  if(tp>0)hl(S.avg*(1+tp/100),"#f04452","익절");
- }
- // 사용자가 그은 선
- const ext=(l)=>{const a=l.i1<=l.i2?[l.i1,l.p1,l.i2,l.p2]:[l.i2,l.p2,l.i1,l.p1];return a};
+ maV.forEach(o=>{ctx.strokeStyle=o.m.c;ctx.beginPath();let st=false;for(let i=b0;i<=end;i++){const x=o.f(i);if(x!=x)continue;st?ctx.lineTo(XB(i),Y(x)):ctx.moveTo(XB(i),Y(x));st=true}ctx.stroke()});
+ function hl(p,col,txt){const y=Y(p);ctx.strokeStyle=col;ctx.setLineDash([5,4]);ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=col;ctx.textAlign="left";ctx.fillText(txt,padL+2,y-8)}
+ if(S.sh>0){hl(S.avg,"#d2a8ff","평단");if(sl>0)hl(S.avg*(1-sl/100),"#3182f6","손절");if(tp>0)hl(S.avg*(1+tp/100),"#f04452","익절")}
+ // 사용자 선 (일봉 idx·가격 기준이라 일/주/월봉 어디서든 같은 선)
  ctx.lineWidth=1.6;
  S.lines.concat(S.tmp?[S.tmp]:[]).forEach(l=>{
-  ctx.strokeStyle=l.t==="h"?"#79c0ff":"#ff7b72";ctx.fillStyle=ctx.strokeStyle;
+  const col=l.t==="h"?"#79c0ff":"#ff7b72";ctx.strokeStyle=ctx.fillStyle=col;
   if(l.t==="h"){const y=Y(l.p);ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.textAlign="left";ctx.fillText(fmt(l.p),padL+2,y-7);return}
-  const [a,pa,b,pb]=ext(l);if(a===b)return;
-  const sl=(pb-pa)/(b-a),xa=X(a-beg),ya=Y(pa),xe=W-padR,pe=pa+sl*(end+0.5-a);
-  ctx.beginPath();ctx.moveTo(xa,ya);ctx.lineTo(xe,Y(pe));ctx.stroke();
-  ctx.beginPath();ctx.arc(xa,ya,3,0,7);ctx.fill();ctx.beginPath();ctx.arc(X(b-beg),Y(pb),3,0,7);ctx.fill();
+  if(Math.abs(l.d2-l.d1)<1e-6)return;
+  const sp=(l.p2-l.p1)/(l.d2-l.d1),ur=first+Vn,dr=u2d(ur),pr=l.p1+sp*(dr-l.d1);
+  const x1=XU(d2u(l.d1)),x2=XU(d2u(l.d2));
+  ctx.beginPath();ctx.moveTo(x1,Y(l.p1));ctx.lineTo(XU(ur),Y(pr));ctx.stroke();
+  ctx.beginPath();ctx.arc(x1,Y(l.p1),3,0,7);ctx.fill();ctx.beginPath();ctx.arc(x2,Y(l.p2),3,0,7);ctx.fill();
  });
- // 현재가 태그
- const cp=C(s,end),cy=Y(cp);ctx.fillStyle="#e6edf3";ctx.fillRect(W-padR,cy-9,padR-2,18);ctx.fillStyle="#0d1117";ctx.textAlign="left";ctx.fillText(fmt(cp),W-padR+4,cy);
- // 선택한 봉에서 산 가정
- if(S.sel>=beg&&S.sel<=end){
-  const k=S.sel-beg,bp=C(s,S.sel),r=cp/bp-1-2*FEE,y=Y(bp);
-  ctx.strokeStyle="#f2cc60";ctx.setLineDash([2,3]);ctx.beginPath();ctx.moveTo(X(k),y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.setLineDash([]);
-  ctx.beginPath();ctx.arc(X(k),y,4,0,7);ctx.fillStyle="#f2cc60";ctx.fill();
-  // 그 이후 최저/최고
-  let mn=Infinity,mx=-Infinity;for(let i=S.sel;i<=end;i++){mn=Math.min(mn,L(s,i));mx=Math.max(mx,H(s,i))}
+ // 매수/매도 마커 (B 빨강 / S 파랑)
+ const cnt={};
+ S.tl.forEach(t=>{
+  const gi=dg[t.i];if(gi<b0||gi>end)return;
+  const b=B[gi],x=XB(gi),k=(cnt[gi+t.side]=(cnt[gi+t.side]||0)+1)-1;
+  const y=t.side==="B"?Y(b.l)+13+k*17:Y(b.h)-13-k*17,col=t.side==="B"?"#f04452":"#3182f6";
+  ctx.beginPath();ctx.arc(x,y,8,0,7);ctx.fillStyle=col;ctx.fill();
+  ctx.fillStyle="#fff";ctx.font="bold 10px sans-serif";ctx.textAlign="center";ctx.fillText(t.side,x,y+0.5);ctx.font="11px sans-serif";
+ });
+ // 선택 봉에서 샀다면
+ if(S.sel>=0){
+  const gi=dg[S.sel],b=B[gi],cp=C(s,S.i),bp=C(s,S.sel),r=cp/bp-1-2*FEE;
+  if(gi>=b0&&gi<=end){const x=XB(gi),y=Y(bp);
+   ctx.strokeStyle="#f2cc60";ctx.lineWidth=1;ctx.setLineDash([2,3]);ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.setLineDash([]);
+   ctx.beginPath();ctx.arc(x,y,4,0,7);ctx.fillStyle="#f2cc60";ctx.fill()}
+  let mn=Infinity,mx=-Infinity;for(let i=S.sel;i<=S.i;i++){mn=Math.min(mn,L(s,i));mx=Math.max(mx,H(s,i))}
   const t1=`이 봉 종가 ${fmt(bp)}에 샀다면 → 지금 ${pct(r)} (${S.i-S.sel}일)`,t2=`중간 최저 ${pct(mn/bp-1)} / 최고 ${pct(mx/bp-1)}`;
   ctx.font="12px sans-serif";const tw=Math.max(ctx.measureText(t1).width,ctx.measureText(t2).width)+12;
   ctx.fillStyle="rgba(22,27,34,.92)";ctx.fillRect(padL,padT+14,tw,36);
   ctx.fillStyle=r>=0?"#f04452":"#3182f6";ctx.textAlign="left";ctx.fillText(t1,padL+6,padT+24);ctx.fillStyle="#8b949e";ctx.fillText(t2,padL+6,padT+42);ctx.font="11px sans-serif";
  }
- // x축: 경과일
- ctx.fillStyle="#8b949e";ctx.textAlign="center";
- for(let g=0;g<=4;g++){const k=Math.round((n-1)*g/4),i=beg+k;ctx.textAlign=g==0?"left":g==4?"right":"center";ctx.fillText(S.done?DATA.dates[s.s+i].replace(/(\d{4})(\d\d)(\d\d)/,"$1-$2-$3"):"D"+(i-S.i0>=0?"+":"")+(i-S.i0),g==0?padL:g==4?W-padR:X(k),Ht-8)}
+ ctx.restore();
+ // 현재가 태그, 축 라벨
+ const cp=C(s,S.i),cy=Y(cp);ctx.fillStyle="#e6edf3";ctx.fillRect(W-padR,cy-9,padR-2,18);ctx.fillStyle="#0d1117";ctx.textAlign="left";ctx.fillText(fmt(cp),W-padR+4,cy);
+ ctx.fillStyle="#8b949e";
+ const ndisp=end-b0+1;
+ let lastX=-1e9;
+ for(let g=0;g<=4;g++){
+  const gi=b0+Math.round((ndisp-1)*g/4),b=B[gi];
+  const px0=g==0?padL:g==4?W-padR:XB(gi);if(px0-lastX<70)continue;lastX=px0;
+  ctx.textAlign=g==0?"left":g==4?"right":"center";
+  const lab=S.done?DATA.dates[s.s+b.b].replace(/(\d{4})(\d\d)(\d\d)/,"$1-$2-$3"):"D"+(b.b-S.i0>=0?"+":"")+(b.b-S.i0);
+  ctx.fillText(lab,g==0?padL:g==4?W-padR:XB(gi),Ht-8);
+ }
+ ctx.textAlign="left";ctx.fillStyle="#8b949e";
+ ctx.fillText((TF==="D"?"일봉":TF==="W"?"주봉":"월봉")+" · "+Vn+"봉",W-padR-92,padT+6);
 }
 function update(){
  const s=S.st,px=C(s,S.i),eq=equity(),pl=S.sh>0?(px/S.avg-1):0;
- $("#s_day").textContent=S.done?"종료":"D+"+(S.i-S.i0);
+ $("#s_day").textContent="D+"+(S.i-S.i0)+(S.done?" (공개)":"");
  $("#s_px").textContent=fmt(px)+"원";
  $("#s_pos").textContent=S.sh>0?`${fmt(S.sh)}주 @${fmt(S.avg)}`:"없음";
  const p=$("#s_pl");p.textContent=S.sh>0?pct(pl)+" ("+fmt(S.sh*(px-S.avg))+"원)":"-";p.className=cls(pl);
  $("#s_eq").textContent=fmt(eq)+"원";
- const r=eq/CASH0-1,e=$("#s_ret");e.textContent=pct(r);e.className=cls(r);
- document.querySelectorAll("button").forEach(b=>{if(b.id!=="new"&&b.id!=="clr")b.disabled=S.done});
+ const r=(S.done?S.endEq:eq)/CASH0-1,e=$("#s_ret");e.textContent=pct(r);e.className=cls(r);
+ document.querySelectorAll("[data-b],[data-s],#end").forEach(b=>b.disabled=S.done);
+ if(S.done){
+  const bh=C(s,S.endI)/C(s,S.i0)-1,after=px/C(s,S.endI)-1;
+  msg(`공개: ${s.n} (${s.m}) · 지금 ${DATA.dates[s.s+S.i].replace(/(\d{4})(\d\d)(\d\d)/,"$1-$2-$3")} · 내 수익률 ${pct(r)} · 그냥 보유 ${pct(bh)} · 종료 후 주가 ${pct(after)}`);
+ }
  draw();
 }
-let TOOL="cur",DR=null;
-function pos(e){const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
- return {k:(x-G.padL)/G.cw*G.n-0.5,x,y,price:G.hi-(y-G.padT)/G.ph*(G.hi-G.lo)}}
+// ---- 포인터: 이동/확대/그리기 ----
+const PT=new Map();let PAN=null,DR=null,PINCH=null;
+function xy(e){const r=cv.getBoundingClientRect();return {x:e.clientX-r.left,y:e.clientY-r.top}}
+const uAt=x=>G.first+(x-G.padL)/G.bwid, priceAt=y=>G.hi-(y-G.padT)/G.ph*(G.hi-G.lo);
+function zoomAt(f,x){
+ if(!G)return;const u=uAt(x),nb=G.nb;
+ const nV=Math.max(15,Math.min(Math.max(30,nb+10),V*f));
+ const nbw=G.cw/Math.round(nV),first=u-(x-G.padL)/nbw,end=first+Math.round(nV)-1;
+ V=nV;OFF=nb-1-end;draw();
+}
+cv.addEventListener("wheel",e=>{e.preventDefault();zoomAt(e.deltaY>0?1.15:1/1.15,xy(e).x)},{passive:false});
 cv.addEventListener("pointerdown",e=>{
  if(!S||!G)return;
- const q=pos(e);
- if(TOOL==="cur"){
-  const k=Math.round(q.k);if(k<0||k>=G.n)return;
-  S.sel=(S.sel===G.beg+k)?-1:G.beg+k;draw();return}
- e.preventDefault();cv.setPointerCapture(e.pointerId);
- const i=G.beg+Math.max(0,Math.min(G.n-1,q.k));
- if(TOOL==="hz"){S.lines.push({t:"h",p:q.price});draw();return}
- DR={i,p:q.price};S.tmp={t:"t",i1:i,p1:q.price,i2:i,p2:q.price};
+ PT.set(e.pointerId,xy(e));cv.setPointerCapture(e.pointerId);
+ if(PT.size===2){const [a,b]=[...PT.values()];PINCH={d:Math.hypot(a.x-b.x,a.y-b.y),V0:V};PAN=null;DR=null;S.tmp=null;return}
+ const q=xy(e);
+ if(TOOL==="cur"||e.shiftKey){PAN={x0:q.x,off0:OFF,moved:false};return}
+ e.preventDefault();
+ const d=u2d(uAt(q.x)),p=priceAt(q.y);
+ if(TOOL==="hz"){S.lines.push({t:"h",p});draw();return}
+ DR={d,p};S.tmp={t:"t",d1:d,p1:p,d2:d,p2:p};
 });
 cv.addEventListener("pointermove",e=>{
- if(!DR||!S)return;const q=pos(e);
- S.tmp={t:"t",i1:DR.i,p1:DR.p,i2:G.beg+Math.max(0,Math.min(G.n-1,q.k)),p2:q.price};draw();
+ if(!S||!G||!PT.has(e.pointerId))return;
+ const q=xy(e);PT.set(e.pointerId,q);
+ if(PINCH&&PT.size>=2){const [a,b]=[...PT.values()];const d=Math.hypot(a.x-b.x,a.y-b.y);if(d>5){const nV=PINCH.V0*PINCH.d/d;zoomAt(nV/V,(a.x+b.x)/2)}return}
+ if(PAN){const dx=q.x-PAN.x0;if(Math.abs(dx)>4)PAN.moved=true;if(PAN.moved){OFF=PAN.off0+dx/G.bwid;draw()}return}
+ if(DR){S.tmp={t:"t",d1:DR.d,p1:DR.p,d2:u2d(uAt(q.x)),p2:priceAt(q.y)};draw()}
 });
-function endDraw(){
- if(!DR)return;DR=null;const t=S.tmp;S.tmp=null;
- if(t&&Math.abs(t.i2-t.i1)>=1)S.lines.push(t);draw();
+function up(e){
+ PT.delete(e.pointerId);
+ if(PT.size<2)PINCH=null;
+ if(PAN&&!PAN.moved&&TOOL==="cur"&&e.type==="pointerup"&&G){
+  const q=xy(e),gi=Math.floor(uAt(q.x)),{B}=VC;
+  if(gi>=0&&gi<B.length){const d=B[gi].b;S.sel=(S.sel===d)?-1:d}
+ }
+ PAN=null;
+ if(DR){DR=null;const t=S.tmp;S.tmp=null;if(t&&Math.abs(t.d2-t.d1)>=0.5)S.lines.push(t)}
+ draw();
 }
-cv.addEventListener("pointerup",endDraw);cv.addEventListener("pointercancel",endDraw);
+cv.addEventListener("pointerup",up);cv.addEventListener("pointercancel",up);
+addEventListener("resize",draw);
 document.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>{
  TOOL=b.dataset.t;document.querySelectorAll("[data-t]").forEach(x=>x.classList.toggle("on",x===b));
- cv.classList.toggle("draw",TOOL!=="cur");
- msg(TOOL==="tr"?"추세선: 시작점에서 끝점까지 드래그. 오른쪽으로 자동 연장돼.":TOOL==="hz"?"수평선: 원하는 가격 높이를 탭.":"");
+ cv.classList.toggle("draw",TOOL!=="cur");cv.classList.toggle("pan",TOOL==="cur");
+ msg(TOOL==="tr"?"추세선: 시작점에서 끝점까지 드래그. 오른쪽으로 자동 연장. (이동은 Shift+드래그)":TOOL==="hz"?"수평선: 원하는 가격 높이를 탭.":"");
 });
-$("#undo").onclick=()=>{if(S){S.lines.pop();draw()}};
-$("#clrl").onclick=()=>{if(S){S.lines=[];draw()}};
-addEventListener("resize",draw);
+document.querySelectorAll("[data-tf]").forEach(b=>b.onclick=()=>{
+ TF=b.dataset.tf;document.querySelectorAll("[data-tf]").forEach(x=>x.classList.toggle("on",x===b));
+ V=DEFV[TF];OFF=0;draw();
+});
+$("#zin").onclick=()=>G&&zoomAt(1/1.25,G.W-G.padR-G.padL);
+$("#zout").onclick=()=>G&&zoomAt(1.25,G.W-G.padR-G.padL);
+$("#zlatest").onclick=()=>{OFF=0;V=DEFV[TF];draw()};
 $("#next").onclick=()=>stepN(1);$("#next5").onclick=()=>stepN(5);$("#next20").onclick=()=>stepN(20);
 document.querySelectorAll("[data-b]").forEach(b=>b.onclick=()=>buy(+b.dataset.b/100));
 document.querySelectorAll("[data-s]").forEach(b=>b.onclick=()=>sell(+b.dataset.s));
 $("#end").onclick=finish;$("#new").onclick=newRound;
+$("#undo").onclick=()=>{if(S){S.lines.pop();draw()}};
+$("#clrl").onclick=()=>{if(S){S.lines=[];draw()}};
 $("#clr").onclick=()=>{try{localStorage.removeItem("sim:hist")}catch(e){}hist()};
 $("#sl").onchange=$("#tp").onchange=()=>S&&draw();
+cv.classList.add("pan");
 buildMaBar();hist();
-fetch("sim_data.json").then(r=>{if(!r.ok)throw 0;return r.json()}).then(d=>{DATA=d;newRound()}).catch(()=>{msg("sim_data.json을 못 불러왔어. 스캔이 한 번 돌아야 생겨.")});
+fetch("sim_data.json").then(r=>{if(!r.ok)throw 0;return r.json()}).then(d=>{DATA=d;prep();newRound()}).catch(()=>{msg("sim_data.json을 못 불러왔어. 스캔이 한 번 돌아야 생겨.")});
 </script></body></html>
