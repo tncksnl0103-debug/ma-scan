@@ -1,0 +1,41 @@
+name: probe minute data
+on:
+  workflow_dispatch: {}
+  push:
+    paths: [.github/workflows/probe.yml]
+permissions:
+  contents: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: probe
+        run: |
+          mkdir -p probe
+          UA="Mozilla/5.0"
+          {
+          echo "== fchart minute count=5000 =="
+          curl -s -m 30 -A "$UA" "https://fchart.stock.naver.com/sise.nhn?symbol=005930&timeframe=minute&count=5000&requestType=0" -o p1.txt -w "http %{http_code} bytes %{size_download}\n"
+          grep -c "<item" p1.txt || true; grep -o 'data="[0-9]*' p1.txt | head -2; grep -o 'data="[0-9]*' p1.txt | tail -2
+          echo; echo "== api.stock.naver.com minute =="
+          curl -s -m 30 -A "$UA" "https://api.stock.naver.com/chart/domestic/item/005930/minute?startDateTime=202609010900&endDateTime=202609301600" -o p2.txt -w "http %{http_code} bytes %{size_download}\n"
+          head -c 400 p2.txt; echo
+          python3 - <<'PY'
+          import json
+          try:
+              d=json.load(open('p2.txt')); print(type(d).__name__, len(d)); print(d[0] if d else None); print(d[-1] if d else None)
+          except Exception as e: print("json fail",e)
+          PY
+          echo; echo "== api.stock.naver.com minute older (2026-03) =="
+          curl -s -m 30 -A "$UA" "https://api.stock.naver.com/chart/domestic/item/005930/minute?startDateTime=202603020900&endDateTime=202603021600" -o p3.txt -w "http %{http_code} bytes %{size_download}\n"
+          head -c 300 p3.txt; echo
+          echo; echo "== m.stock front-api =="
+          curl -s -m 30 -A "$UA" "https://m.stock.naver.com/front-api/external/chart/domestic/info?symbol=005930&requestType=1&startTime=20260901&endTime=20260930&timeframe=minute" -o p4.txt -w "http %{http_code} bytes %{size_download}\n"
+          head -c 300 p4.txt; echo
+          } 2>&1 | tee probe/result.txt
+      - name: commit
+        run: |
+          git config user.name "github-actions"; git config user.email "actions@github.com"
+          git add probe/result.txt; git commit -m "probe result" || true
+          git pull --rebase origin main; git push
