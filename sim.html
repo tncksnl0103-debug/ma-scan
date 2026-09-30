@@ -45,15 +45,15 @@ canvas.pan{cursor:grab}
   <span style="width:8px"></span><button id="zin">＋ 확대</button><button id="zout">－ 축소</button><button id="zlatest">최신으로</button>
  </div>
  <div class="bar" id="tools"><label>도구</label>
-  <button data-t="cur" class="on">👆 봉 선택</button><button data-t="tr">╱ 추세선</button><button data-t="hz">─ 수평선</button><button id="undo">되돌리기</button><button id="clrl">선 전체 삭제</button>
+  <button data-t="cur" class="on">👆 봉 선택</button><button data-t="tr">╱ 추세선</button><button data-t="hz">─ 수평선</button><button id="undo">되돌리기</button><button id="dellin" disabled>선택한 선 삭제</button><button id="clrl">선 전체 삭제</button>
  </div>
  <div class="bar">
-  <label>손절 <input type="number" id="sl" value="5" min="0" step="1">%</label>
-  <label>익절 <input type="number" id="tp" value="0" min="0" step="1">%</label>
-  <label>(0=사용 안 함, 장중 저가/고가 닿으면 자동 청산)</label>
+  <label style="color:var(--tx)"><input type="checkbox" id="autoh" checked> 수평선에 닿으면 자동 매도</label>
+  <label style="color:var(--tx)"><input type="checkbox" id="magnet" checked> 자석(봉 끝에 붙임)</label>
+  <label>(보유 중일 때 위쪽 선=익절, 아래쪽 선=손절처럼 작동 · 스페이스바=봉 선택, Esc=선택 해제)</label>
  </div>
  <div id="cvw"><canvas id="cv"></canvas></div>
- <div id="hint">차트는 <b>드래그로 좌우 이동, 휠·핀치·＋－로 확대/축소</b>(선 도구 켠 상태에서 마우스 이동은 Shift+드래그). '봉 선택'에서 봉을 탭하면 <b>"그 봉 종가에 샀다면 지금 몇 %"</b>를 보여줌. 선은 일/주/월봉 어디서 그어도 다 보여. 새 판이면 사라져. 최근 130개 봉만 보임.</div>
+ <div id="hint">차트는 <b>드래그로 좌우 이동, 휠·핀치·＋－로 확대/축소</b>(선 도구 켠 상태에서 마우스 이동은 Shift+드래그). 봉 위에 마우스를 올리면 시/고/저/종가가 뜨고, 선은 봉 끝(시·고·저·종)에 자동으로 붙어. '봉 선택'에서 선을 탭하면 선택돼서 Delete로 지울 수 있어. 봉을 탭하면 <b>"그 봉 종가에 샀다면 지금 몇 %"</b>를 보여줌. 선은 일/주/월봉 어디서 그어도 다 보여. 새 판이면 사라져. 최근 130개 봉만 보임.</div>
  <div class="stats">
   <div class="st"><span class="dim">경과</span><b id="s_day">-</b></div>
   <div class="st"><span class="dim">현재가</span><b id="s_px">-</b></div>
@@ -142,28 +142,30 @@ function newRound(){
  const cand=DATA.stocks.filter(s=>s.cl.length>=MINPRE+MINPOST+50);
  const st=cand[Math.floor(Math.random()*cand.length)];
  const start=MINPRE+Math.floor(Math.random()*(st.cl.length-MINPRE-MINPOST));
- S={lines:[],tl:[],st,i:start,i0:start,cash:CASH0,sh:0,avg:0,sel:-1,done:false,tc:0,endI:-1,endEq:0};
+ S={selLine:-1,hb:-1,snapPt:null,lines:[],tl:[],st,i:start,i0:start,cash:CASH0,sh:0,avg:0,sel:-1,done:false,tc:0,endI:-1,endEq:0};
  VC=null;OFF=0;V=DEFV[TF];
  $("#log").innerHTML="";msg("");
  logm("새 판 시작. 종목·날짜는 '끝내고 공개'를 누르면 보임.");
  update();
 }
 const equity=()=>S.cash+S.sh*C(S.st,S.i);
-const limits=()=>({sl:+$("#sl").value||0,tp:+$("#tp").value||0});
+const limits=()=>({sl:0,tp:0});
 
 function step(){
  const s=S.st;
  if(S.i>=s.cl.length-1){msg("데이터 끝이야.");return false}
  S.i++;
  if(S.sh>0&&!S.done){
-  const {sl,tp}=limits();
-  const slp=sl>0?S.avg*(1-sl/100):0,tpp=tp>0?S.avg*(1+tp/100):0;
-  const o=O(s,S.i),h=H(s,S.i),l=L(s,S.i);
+  const o=O(s,S.i),h=H(s,S.i),l=L(s,S.i),pc=C(s,S.i-1);
+  let lo=null,hi=null;   // 아래쪽 선(손절형)은 위쪽 선(익절형)보다 먼저 체결된 것으로 본다(보수적)
+  if($("#autoh").checked)S.lines.forEach(t=>{
+   if(t.t!=="h")return;
+   if(t.p<pc&&l<=t.p&&(lo===null||t.p>lo))lo=t.p;
+   if(t.p>=pc&&h>=t.p&&(hi===null||t.p<hi))hi=t.p;
+  });
   let x=0,why="";
-  if(slp&&o<=slp){x=o;why="손절(갭)"}
-  else if(slp&&l<=slp){x=slp;why="손절"}
-  else if(tpp&&o>=tpp){x=o;why="익절(갭)"}
-  else if(tpp&&h>=tpp){x=tpp;why="익절"}
+  if(lo!==null){x=o<=lo?o:lo;why="수평선 매도(아래)"}
+  else if(hi!==null){x=o>=hi?o:hi;why="수평선 매도(위)"}
   if(x)closeAt(x,why);
  }
  return true;
@@ -256,7 +258,8 @@ function draw(){
  // 사용자 선 (일봉 idx·가격 기준이라 일/주/월봉 어디서든 같은 선)
  ctx.lineWidth=1.6;
  S.lines.concat(S.tmp?[S.tmp]:[]).forEach(l=>{
-  const col=l.t==="h"?"#79c0ff":"#ff7b72";ctx.strokeStyle=ctx.fillStyle=col;
+  const isSel=S.lines[S.selLine]===l;
+  const col=isSel?"#ffffff":l.t==="h"?"#79c0ff":"#ff7b72";ctx.strokeStyle=ctx.fillStyle=col;ctx.lineWidth=isSel?3:1.6;
   if(l.t==="h"){const y=Y(l.p);ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.textAlign="left";ctx.fillText(fmt(l.p),padL+2,y-7);return}
   if(Math.abs(l.d2-l.d1)<1e-6)return;
   const sp=(l.p2-l.p1)/(l.d2-l.d1),ur=first+Vn,dr=u2d(ur),pr=l.p1+sp*(dr-l.d1);
@@ -285,7 +288,20 @@ function draw(){
   ctx.fillStyle="rgba(22,27,34,.92)";ctx.fillRect(padL,padT+14,tw,36);
   ctx.fillStyle=r>=0?"#f04452":"#3182f6";ctx.textAlign="left";ctx.fillText(t1,padL+6,padT+24);ctx.fillStyle="#8b949e";ctx.fillText(t2,padL+6,padT+42);ctx.font="11px sans-serif";
  }
+ if(S.snapPt&&TOOL!=="cur"){ctx.strokeStyle="#f2cc60";ctx.lineWidth=2;ctx.beginPath();ctx.arc(S.snapPt.x,S.snapPt.y,6,0,7);ctx.stroke()}
  ctx.restore();
+ // 봉 OHLC 툴팁 (마우스 올림 또는 탭한 봉)
+ const tgi=S.hb>=b0&&S.hb<=end?S.hb:(S.sel>=0&&dg[S.sel]>=b0&&dg[S.sel]<=end?dg[S.sel]:-1);
+ if(tgi>=0){
+  const b=B[tgi],pc=tgi>0?B[tgi-1].c:b.o,chg=b.c/pc-1;
+  const lab=S.done?DATA.dates[s.s+b.b].replace(/(\d{4})(\d\d)(\d\d)/,"$1-$2-$3"):"D"+(b.b-S.i0>=0?"+":"")+(b.b-S.i0);
+  const L1=(TF==="D"?"":TF==="W"?"주봉 ":"월봉 ")+lab,L2=`시 ${fmt(b.o)}  고 ${fmt(b.h)}`,L3=`저 ${fmt(b.l)}  종 ${fmt(b.c)}`,L4=`전봉 대비 ${pct(chg)}`;
+  ctx.font="12px sans-serif";const tw=Math.max(...[L1,L2,L3,L4].map(t=>ctx.measureText(t).width))+14,bx=W-padR-tw-4,by=padT+18;
+  ctx.fillStyle="rgba(22,27,34,.94)";ctx.strokeStyle="#30363d";ctx.lineWidth=1;ctx.fillRect(bx,by,tw,70);ctx.strokeRect(bx,by,tw,70);
+  ctx.textAlign="left";ctx.fillStyle="#8b949e";ctx.fillText(L1,bx+7,by+11);
+  ctx.fillStyle="#e6edf3";ctx.fillText(L2,bx+7,by+27);ctx.fillText(L3,bx+7,by+43);
+  ctx.fillStyle=chg>=0?"#f04452":"#3182f6";ctx.fillText(L4,bx+7,by+59);ctx.font="11px sans-serif";
+ }
  // 현재가 태그, 축 라벨
  const cp=C(s,S.i),cy=Y(cp);ctx.fillStyle="#e6edf3";ctx.fillRect(W-padR,cy-9,padR-2,18);ctx.fillStyle="#0d1117";ctx.textAlign="left";ctx.fillText(fmt(cp),W-padR+4,cy);
  ctx.fillStyle="#8b949e";
@@ -317,6 +333,42 @@ function update(){
  draw();
 }
 // ---- 포인터: 이동/확대/그리기 ----
+function snap(x,y){
+ // 반환 {d,p,on}. x,y는 캔버스 좌표. 봉 끝(시·고·저·종)에 12px 안이면 붙는다.
+ let d=u2d(uAt(x)),p=priceAt(y),on=false;
+ if(!$("#magnet").checked||!VC)return {d,p,on};
+ const {B}=VC,g=Math.floor(uAt(x));let best=13,bd=null,bp=null,bx=null,by=null;
+ for(let gi=g-1;gi<=g+1;gi++){
+  if(gi<0||gi>=B.length)continue;const b=B[gi],cx=G.padL+(gi+0.5-G.first)*G.bwid;
+  const c=[["o",b.o],["h",b.h],["l",b.l],["c",b.c]];
+  for(const [k,v] of c){
+   const py=G.padT+(G.hi-v)/(G.hi-G.lo)*G.ph,dist=Math.hypot(cx-x,py-y)>Math.abs(py-y)?Math.hypot((cx-x)*0.35,py-y):Math.abs(py-y);
+   if(dist<best){best=dist;bp=v;bx=cx;by=py;
+    let dd=b.a;const s0=S.st;
+    if(k==="c")dd=b.b;else if(k==="h"){for(let i=b.a;i<=b.b;i++)if(H(s0,i)===v){dd=i;break}}
+    else if(k==="l"){for(let i=b.a;i<=b.b;i++)if(L(s0,i)===v){dd=i;break}}
+    bd=dd}
+  }
+ }
+ if(bd!==null){d=bd;p=bp;on=true;S.snapPt={x:bx,y:by}}
+ return {d,p,on};
+}
+function hitLine(x,y){
+ if(!G||!VC)return -1;let best=8,bi=-1;
+ S.lines.forEach((l,i)=>{
+  let dist;
+  if(l.t==="h")dist=Math.abs(y-(G.padT+(G.hi-l.p)/(G.hi-G.lo)*G.ph));
+  else{
+   const ur=G.first+G.Vn,dr=u2d(ur),sp=(l.p2-l.p1)/(l.d2-l.d1),pr=l.p1+sp*(dr-l.d1);
+   const X=u=>G.padL+(u-G.first)*G.bwid,Yp=p=>G.padT+(G.hi-p)/(G.hi-G.lo)*G.ph;
+   const ax=X(d2u(l.d1)),ay=Yp(l.p1),bx=X(ur),by=Yp(pr),dx=bx-ax,dy=by-ay,len2=dx*dx+dy*dy||1;
+   const t=Math.max(0,Math.min(1,((x-ax)*dx+(y-ay)*dy)/len2));dist=Math.hypot(x-(ax+t*dx),y-(ay+t*dy));
+  }
+  if(dist<best){best=dist;bi=i}
+ });
+ return bi;
+}
+function delSel(){if(S&&S.selLine>=0){S.lines.splice(S.selLine,1);S.selLine=-1;$("#dellin").disabled=true;draw()}}
 const PT=new Map();let PAN=null,DR=null,PINCH=null;
 function xy(e){const r=cv.getBoundingClientRect();return {x:e.clientX-r.left,y:e.clientY-r.top}}
 const uAt=x=>G.first+(x-G.padL)/G.bwid, priceAt=y=>G.hi-(y-G.padT)/G.ph*(G.hi-G.lo);
@@ -334,8 +386,8 @@ cv.addEventListener("pointerdown",e=>{
  const q=xy(e);
  if(TOOL==="cur"||e.shiftKey){PAN={x0:q.x,off0:OFF,moved:false};return}
  e.preventDefault();
- const d=u2d(uAt(q.x)),p=priceAt(q.y);
- if(TOOL==="hz"){S.lines.push({t:"h",p});draw();return}
+ const sn=snap(q.x,q.y),d=sn.d,p=sn.p;
+ if(TOOL==="hz"){S.lines.push({t:"h",p});S.snapPt=null;draw();return}
  DR={d,p};S.tmp={t:"t",d1:d,p1:p,d2:d,p2:p};
 });
 cv.addEventListener("pointermove",e=>{
@@ -343,14 +395,25 @@ cv.addEventListener("pointermove",e=>{
  const q=xy(e);PT.set(e.pointerId,q);
  if(PINCH&&PT.size>=2){const [a,b]=[...PT.values()];const d=Math.hypot(a.x-b.x,a.y-b.y);if(d>5){const nV=PINCH.V0*PINCH.d/d;zoomAt(nV/V,(a.x+b.x)/2)}return}
  if(PAN){const dx=q.x-PAN.x0;if(Math.abs(dx)>4)PAN.moved=true;if(PAN.moved){OFF=PAN.off0+dx/G.bwid;draw()}return}
- if(DR){S.tmp={t:"t",d1:DR.d,p1:DR.p,d2:u2d(uAt(q.x)),p2:priceAt(q.y)};draw()}
+ if(DR){S.snapPt=null;const sn=snap(q.x,q.y);S.tmp={t:"t",d1:DR.d,p1:DR.p,d2:sn.d,p2:sn.p};draw()}
 });
+// 마우스 호버: 봉 시고저종 표시 + 자석 미리보기
+cv.addEventListener("pointermove",e=>{
+ if(!S||!G||PT.has(e.pointerId)||e.pointerType!=="mouse")return;
+ const q=xy(e),gi=Math.floor(uAt(q.x));
+ S.hb=(q.x>=G.padL&&q.x<=G.W-G.padR&&gi>=0&&gi<G.nb)?gi:-1;
+ S.snapPt=null;if(TOOL!=="cur"&&S.hb>=0)snap(q.x,q.y);
+ draw();
+});
+cv.addEventListener("pointerleave",e=>{if(S&&e.pointerType==="mouse"&&!PT.size){S.hb=-1;S.snapPt=null;draw()}});
 function up(e){
  PT.delete(e.pointerId);
  if(PT.size<2)PINCH=null;
  if(PAN&&!PAN.moved&&TOOL==="cur"&&e.type==="pointerup"&&G){
-  const q=xy(e),gi=Math.floor(uAt(q.x)),{B}=VC;
-  if(gi>=0&&gi<B.length){const d=B[gi].b;S.sel=(S.sel===d)?-1:d}
+  const q=xy(e),gi=Math.floor(uAt(q.x)),{B}=VC,hl=hitLine(q.x,q.y);
+  if(hl>=0){S.selLine=(S.selLine===hl)?-1:hl;S.hb=-1}
+  else{S.selLine=-1;if(gi>=0&&gi<B.length){const d=B[gi].b;S.sel=(S.sel===d)?-1:d;S.hb=gi}}
+  $("#dellin").disabled=S.selLine<0;
  }
  PAN=null;
  if(DR){DR=null;const t=S.tmp;S.tmp=null;if(t&&Math.abs(t.d2-t.d1)>=0.5)S.lines.push(t)}
@@ -358,11 +421,20 @@ function up(e){
 }
 cv.addEventListener("pointerup",up);cv.addEventListener("pointercancel",up);
 addEventListener("resize",draw);
-document.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>{
- TOOL=b.dataset.t;document.querySelectorAll("[data-t]").forEach(x=>x.classList.toggle("on",x===b));
- cv.classList.toggle("draw",TOOL!=="cur");cv.classList.toggle("pan",TOOL==="cur");
- msg(TOOL==="tr"?"추세선: 시작점에서 끝점까지 드래그. 오른쪽으로 자동 연장. (이동은 Shift+드래그)":TOOL==="hz"?"수평선: 원하는 가격 높이를 탭.":"");
+function setTool(t){
+ TOOL=t;document.querySelectorAll("[data-t]").forEach(x=>x.classList.toggle("on",x.dataset.t===t));
+ cv.classList.toggle("draw",t!=="cur");cv.classList.toggle("pan",t==="cur");
+ if(S){S.snapPt=null;if(t!=="cur"){S.selLine=-1;$("#dellin").disabled=true}draw()}
+ msg(t==="tr"?"추세선: 시작점에서 끝점까지 드래그. 봉 끝에 자동으로 붙고 오른쪽으로 연장돼. (이동은 Shift+드래그)":t==="hz"?"수평선: 원하는 높이를 탭(봉 끝 근처면 붙음). 보유 중 이 선에 닿으면 자동 매도.":"");
+}
+document.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>setTool(b.dataset.t));
+addEventListener("keydown",e=>{
+ const tg=e.target&&e.target.tagName;if(tg==="INPUT"||tg==="TEXTAREA")return;
+ if(e.code==="Space"){e.preventDefault();setTool("cur")}
+ else if(e.key==="Delete"||e.key==="Backspace"){e.preventDefault();delSel()}
+ else if(e.key==="Escape"){setTool("cur");if(S){S.selLine=-1;S.sel=-1;$("#dellin").disabled=true;draw()}}
 });
+$("#dellin").onclick=delSel;
 document.querySelectorAll("[data-tf]").forEach(b=>b.onclick=()=>{
  TF=b.dataset.tf;document.querySelectorAll("[data-tf]").forEach(x=>x.classList.toggle("on",x===b));
  V=DEFV[TF];OFF=0;draw();
@@ -377,7 +449,6 @@ $("#end").onclick=finish;$("#new").onclick=newRound;
 $("#undo").onclick=()=>{if(S){S.lines.pop();draw()}};
 $("#clrl").onclick=()=>{if(S){S.lines=[];draw()}};
 $("#clr").onclick=()=>{try{localStorage.removeItem("sim:hist")}catch(e){}hist()};
-$("#sl").onchange=$("#tp").onchange=()=>S&&draw();
 cv.classList.add("pan");
 buildMaBar();hist();
 fetch("sim_data.json").then(r=>{if(!r.ok)throw 0;return r.json()}).then(d=>{DATA=d;prep();newRound()}).catch(()=>{msg("sim_data.json을 못 불러왔어. 스캔이 한 번 돌아야 생겨.")});
