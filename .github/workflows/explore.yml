@@ -1,0 +1,45 @@
+name: Explore
+
+on:
+  workflow_dispatch: {}
+  push:
+    paths:
+      - explore.py
+      - .github/workflows/explore.yml
+
+permissions:
+  contents: write
+
+jobs:
+  explore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt numba
+
+      - name: Run explore
+        id: ex
+        continue-on-error: true
+        run: python explore.py
+
+      - name: Save result to repo
+        run: |
+          mkdir -p explore
+          cp explore_result.md explore/result.md || true
+          cp explore_all.csv explore/all.csv || true
+          cp scan_log.txt explore/log.txt || true
+          git config user.name "github-actions"
+          git config user.email "actions@users.noreply.github.com"
+          git add explore
+          git commit -m "explore result" || exit 0
+          git pull --rebase origin main
+          git push
+
+      - name: Fail if explore failed
+        if: steps.ex.outcome == 'failure'
+        run: exit 1
