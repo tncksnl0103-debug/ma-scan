@@ -143,6 +143,7 @@ svg .m{fill:none;opacity:.9;vector-effect:non-scaling-stroke}
 </style></head><body>
 <header id="hd">
   <h1>이평선 근접 종목 <span class="sub" id="day"></span></h1>
+  <a href="sim.html" target="_blank" style="color:#3182f6;font-size:13px;white-space:nowrap">가상매매 연습 →</a>
   <span id="tabs"></span>
   <select id="sort"><option value="near">이평선에 가까운 순</option><option value="cap">시가총액 큰 순</option><option value="val">거래대금 큰 순</option></select>
   <select id="mk"><option value="">코스피+코스닥</option><option value="KOSPI">코스피</option><option value="KOSDAQ">코스닥</option></select>
