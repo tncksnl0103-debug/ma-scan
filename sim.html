@@ -16,6 +16,7 @@ button:active{filter:brightness(1.4)}
 button.buy{background:#5c1a20;border-color:var(--up)}
 button.sell{background:#12325c;border-color:var(--dn)}
 button.main{background:#238636;border-color:#2ea043}
+button.on{background:#1f6feb;border-color:#58a6ff}
 button:disabled{opacity:.35}
 input[type=number]{width:62px;background:var(--card);color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:6px}
 label{color:var(--dim);font-size:12px}
@@ -23,6 +24,7 @@ label{color:var(--dim);font-size:12px}
 .chip i{width:10px;height:10px;border-radius:50%;display:inline-block}
 #cvw{background:var(--card);border:1px solid var(--line);border-radius:10px;position:relative}
 canvas{display:block;width:100%;height:min(62vh,520px);touch-action:pan-y}
+canvas.draw{touch-action:none;cursor:crosshair}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;margin:8px 0}
 .st{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 9px}
 .st b{display:block;font-size:16px;margin-top:2px}
@@ -37,13 +39,16 @@ canvas{display:block;width:100%;height:min(62vh,520px);touch-action:pan-y}
 <a href="./">← 이평선 근접 종목</a></header>
 <div class="wrap">
  <div class="bar" id="mabar"></div>
+ <div class="bar" id="tools"><label>도구</label>
+  <button data-t="cur" class="on">👆 봉 선택</button><button data-t="tr">╱ 추세선</button><button data-t="hz">─ 수평선</button><button id="undo">되돌리기</button><button id="clrl">선 전체 삭제</button>
+ </div>
  <div class="bar">
   <label>손절 <input type="number" id="sl" value="5" min="0" step="1">%</label>
   <label>익절 <input type="number" id="tp" value="0" min="0" step="1">%</label>
   <label>(0=사용 안 함, 장중 저가/고가 닿으면 자동 청산)</label>
  </div>
  <div id="cvw"><canvas id="cv"></canvas></div>
- <div id="hint">차트를 탭/클릭하면 <b>"그 봉 종가에 샀다면 지금 몇 %"</b>를 보여줌. 최근 130개 봉만 보임.</div>
+ <div id="hint">'봉 선택'에서 차트를 탭하면 <b>"그 봉 종가에 샀다면 지금 몇 %"</b>를 보여줌. 선은 판이 끝나면 사라져. 최근 130개 봉만 보임.</div>
  <div class="stats">
   <div class="st"><span class="dim">경과</span><b id="s_day">-</b></div>
   <div class="st"><span class="dim">현재가</span><b id="s_px">-</b></div>
@@ -105,7 +110,7 @@ function newRound(){
  const st=cand[Math.floor(Math.random()*cand.length)];
  const n=st.cl.length;
  const start=MINPRE+Math.floor(Math.random()*(n-MINPRE-MINPOST));   // 현재 위치(봉 idx)
- S={st,i:start,i0:start,cash:CASH0,sh:0,avg:0,sel:-1,done:false,trades:0,cutoff:0};
+ S={lines:[],st,i:start,i0:start,cash:CASH0,sh:0,avg:0,sel:-1,done:false,trades:0,cutoff:0};
  $("#log").innerHTML="";msg("");
  logm("새 판 시작. 종목·날짜는 '끝내고 공개'를 누르면 보임.");
  update();
@@ -201,7 +206,7 @@ function draw(){
  if(S.sh>0&&tp>0)hi=Math.max(hi,S.avg*(1+tp/100));
  const m=(hi-lo)*0.06||1;hi+=m;lo-=m;
  const X=k=>padL+(k+0.5)*cw/n, Y=p=>padT+(hi-p)/(hi-lo)*ph, bw=Math.max(1,cw/n*0.68);
- G={beg,n,X,Y,padL,padR,W,Ht,cw};
+ G={beg,n,X,Y,padL,padR,W,Ht,cw,lo,hi,ph,padT};
  ctx.font="11px sans-serif";ctx.textBaseline="middle";
  // 가격 눈금
  ctx.strokeStyle="#21262d";ctx.fillStyle="#8b949e";ctx.lineWidth=1;
@@ -232,6 +237,17 @@ function draw(){
   if(sl>0)hl(S.avg*(1-sl/100),"#3182f6","손절");
   if(tp>0)hl(S.avg*(1+tp/100),"#f04452","익절");
  }
+ // 사용자가 그은 선
+ const ext=(l)=>{const a=l.i1<=l.i2?[l.i1,l.p1,l.i2,l.p2]:[l.i2,l.p2,l.i1,l.p1];return a};
+ ctx.lineWidth=1.6;
+ S.lines.concat(S.tmp?[S.tmp]:[]).forEach(l=>{
+  ctx.strokeStyle=l.t==="h"?"#79c0ff":"#ff7b72";ctx.fillStyle=ctx.strokeStyle;
+  if(l.t==="h"){const y=Y(l.p);ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.textAlign="left";ctx.fillText(fmt(l.p),padL+2,y-7);return}
+  const [a,pa,b,pb]=ext(l);if(a===b)return;
+  const sl=(pb-pa)/(b-a),xa=X(a-beg),ya=Y(pa),xe=W-padR,pe=pa+sl*(end+0.5-a);
+  ctx.beginPath();ctx.moveTo(xa,ya);ctx.lineTo(xe,Y(pe));ctx.stroke();
+  ctx.beginPath();ctx.arc(xa,ya,3,0,7);ctx.fill();ctx.beginPath();ctx.arc(X(b-beg),Y(pb),3,0,7);ctx.fill();
+ });
  // 현재가 태그
  const cp=C(s,end),cy=Y(cp);ctx.fillStyle="#e6edf3";ctx.fillRect(W-padR,cy-9,padR-2,18);ctx.fillStyle="#0d1117";ctx.textAlign="left";ctx.fillText(fmt(cp),W-padR+4,cy);
  // 선택한 봉에서 산 가정
@@ -261,13 +277,36 @@ function update(){
  document.querySelectorAll("button").forEach(b=>{if(b.id!=="new"&&b.id!=="clr")b.disabled=S.done});
  draw();
 }
+let TOOL="cur",DR=null;
+function pos(e){const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
+ return {k:(x-G.padL)/G.cw*G.n-0.5,x,y,price:G.hi-(y-G.padT)/G.ph*(G.hi-G.lo)}}
 cv.addEventListener("pointerdown",e=>{
  if(!S||!G)return;
- const r=cv.getBoundingClientRect(),x=e.clientX-r.left;
- const k=Math.round((x-G.padL)/G.cw*G.n-0.5);
- if(k<0||k>=G.n)return;
- S.sel=(S.sel===G.beg+k)?-1:G.beg+k;draw();
+ const q=pos(e);
+ if(TOOL==="cur"){
+  const k=Math.round(q.k);if(k<0||k>=G.n)return;
+  S.sel=(S.sel===G.beg+k)?-1:G.beg+k;draw();return}
+ e.preventDefault();cv.setPointerCapture(e.pointerId);
+ const i=G.beg+Math.max(0,Math.min(G.n-1,q.k));
+ if(TOOL==="hz"){S.lines.push({t:"h",p:q.price});draw();return}
+ DR={i,p:q.price};S.tmp={t:"t",i1:i,p1:q.price,i2:i,p2:q.price};
 });
+cv.addEventListener("pointermove",e=>{
+ if(!DR||!S)return;const q=pos(e);
+ S.tmp={t:"t",i1:DR.i,p1:DR.p,i2:G.beg+Math.max(0,Math.min(G.n-1,q.k)),p2:q.price};draw();
+});
+function endDraw(){
+ if(!DR)return;DR=null;const t=S.tmp;S.tmp=null;
+ if(t&&Math.abs(t.i2-t.i1)>=1)S.lines.push(t);draw();
+}
+cv.addEventListener("pointerup",endDraw);cv.addEventListener("pointercancel",endDraw);
+document.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>{
+ TOOL=b.dataset.t;document.querySelectorAll("[data-t]").forEach(x=>x.classList.toggle("on",x===b));
+ cv.classList.toggle("draw",TOOL!=="cur");
+ msg(TOOL==="tr"?"추세선: 시작점에서 끝점까지 드래그. 오른쪽으로 자동 연장돼.":TOOL==="hz"?"수평선: 원하는 가격 높이를 탭.":"");
+});
+$("#undo").onclick=()=>{if(S){S.lines.pop();draw()}};
+$("#clrl").onclick=()=>{if(S){S.lines=[];draw()}};
 addEventListener("resize",draw);
 $("#next").onclick=()=>stepN(1);$("#next5").onclick=()=>stepN(5);$("#next20").onclick=()=>stepN(20);
 document.querySelectorAll("[data-b]").forEach(b=>b.onclick=()=>buy(+b.dataset.b/100));
